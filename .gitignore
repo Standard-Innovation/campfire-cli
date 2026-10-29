@@ -1,0 +1,38 @@
+# Build artifacts
+bin/
+/campfire
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Go coverage
+*.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Release artifacts
+dist/
+completions/
+
+# Profiling
+profiles/
+default.pgo
+
+# Local test credentials
+.env.test
+.campfire.yaml

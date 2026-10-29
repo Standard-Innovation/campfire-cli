@@ -1,0 +1,47 @@
+version: 2
+
+project_name: campfire
+
+before:
+  hooks:
+    - go mod tidy
+    - sh -c 'mkdir -p completions && for sh in bash zsh fish; do go run ./cmd/campfire completion $sh > completions/campfire.$sh; done'
+
+builds:
+  - id: campfire
+    main: ./cmd/campfire
+    binary: campfire
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    ids: [campfire]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - MIT-LICENSE
+      - README.md
+      - completions/*
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: github-native
+
+release:
+  prerelease: auto
