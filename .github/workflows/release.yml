@@ -12,8 +12,14 @@ jobs:
     permissions:
       contents: read
 
+  security:
+    uses: ./.github/workflows/security.yml # zizmor: ignore[self-repository] -- actionlint does not accept the $/ syntax yet
+    permissions:
+      contents: read
+      security-events: write
+
   release:
-    needs: test
+    needs: [test, security]
     runs-on: ubuntu-latest
     permissions:
       contents: write
