@@ -34,8 +34,8 @@ var messageListCmd = &cobra.Command{
 
 Without --before or --after, shows the latest page. --before ID pages back
 through older messages and --after ID forward through newer ones. --limit N
-keeps the newest N, fetching older pages as needed; --all fetches the whole
-history.`,
+keeps the newest N, or with --after the first N after ID, fetching more pages
+as needed; --all fetches the whole history.`,
 	Example: `$ campfire message list --room 4
 $ campfire message list --room Sam --limit 10
 $ campfire message list --room https://chat.example.com/rooms/4 --before 1200
@@ -80,13 +80,21 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 			next = page.LinkNext
 		}
 
-		notice := ""
+		cursor := pageCursor(next)
 		if cfgLimit > 0 && len(messages) > cfgLimit {
-			notice = fmt.Sprintf("Showing %d of %d fetched messages", cfgLimit, len(messages))
+			// Page on from the last message kept, not the last one fetched,
+			// so the messages cut here aren't skipped. A message without an
+			// id leaves the server's cursor, which does skip them.
 			if forward {
 				messages = messages[:cfgLimit]
+				if id := toMap(messages[len(messages)-1])["id"]; id != nil {
+					cursor = cursorFlag("after", idString(id))
+				}
 			} else {
 				messages = messages[len(messages)-cfgLimit:]
+				if id := toMap(messages[0])["id"]; id != nil {
+					cursor = cursorFlag("before", idString(id))
+				}
 			}
 		}
 
@@ -97,7 +105,7 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 		breadcrumbs := []Breadcrumb{
 			breadcrumb("post", fmt.Sprintf("campfire message post --room %s \"...\"", roomID), "Reply in this room"),
 		}
-		if cursor := pageCursor(next); cursor != "" {
+		if cursor != "" {
 			context["pagination"] = map[string]any{"has_next": true, "next": cursor}
 			direction := "older"
 			if forward {
@@ -113,7 +121,7 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 			{Header: "From", Field: "creator.name"},
 			{Header: "Message", Field: "body.plain_text"},
 		}
-		printList(messages, cols, fmt.Sprintf("%d messages", len(messages)), notice, context, breadcrumbs)
+		printList(messages, cols, countNoun(len(messages), "message"), "", context, breadcrumbs)
 		return nil
 	},
 }
@@ -130,12 +138,17 @@ func pageCursor(next string) string {
 	}
 	q := u.Query()
 	if before := q.Get("before"); before != "" {
-		return "--before " + before
+		return cursorFlag("before", before)
 	}
 	if after := q.Get("after"); after != "" {
-		return "--after " + after
+		return cursorFlag("after", after)
 	}
 	return ""
+}
+
+// cursorFlag is the message list flag that pages on from id.
+func cursorFlag(direction, id string) string {
+	return "--" + direction + " " + id
 }
 
 var (

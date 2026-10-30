@@ -36,7 +36,7 @@ var doctorCmd = &cobra.Command{
 		}
 		summary := "All checks passed"
 		if failed > 0 {
-			summary = fmt.Sprintf("%d check(s) failed", failed)
+			summary = countNoun(failed, "check") + " failed"
 		}
 
 		printList(checks, render.Columns{{Header: "Check", Field: "name"}, {Header: "Status", Field: "status"}, {Header: "Detail", Field: "message"}, {Header: "Hint", Field: "hint"}}, summary, "", nil, nil)

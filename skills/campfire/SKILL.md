@@ -126,7 +126,7 @@ Room:
 | `--agent` | Agent mode (quiet output, no prompts) |
 | `--styled` / `--markdown` | Human-readable output |
 | `--ids-only` / `--count` | One ID per line / count only |
-| `--limit N` | Keep N results (for messages: the newest N) |
+| `--limit N` | Keep N results (for messages: the newest N, or with `--after` the first N after it) |
 | `--verbose` | Show requests (bot keys are masked) |
 
 Environment: `CAMPFIRE_API_URL`, `CAMPFIRE_TOKEN`, `CAMPFIRE_PROFILE`, `CAMPFIRE_ROOM`, `CAMPFIRE_NO_KEYRING`.
