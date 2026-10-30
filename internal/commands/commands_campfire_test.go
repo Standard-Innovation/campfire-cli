@@ -365,6 +365,20 @@ func TestRoomListAddsDisplayNames(t *testing.T) {
 	}
 }
 
+func TestRoomListLimitNoticesTruncation(t *testing.T) {
+	f := newFakeCampfire(t)
+	env, err := run(t, f, "tok", "room", "list", "--limit", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(env["data"].([]any)); got != 1 {
+		t.Fatalf("rooms = %d", got)
+	}
+	if want := "Showing 1 of 5 results"; env["notice"] != want {
+		t.Errorf("notice = %v, want %q", env["notice"], want)
+	}
+}
+
 func TestBotKeyRoomListExplainsTokenNeeded(t *testing.T) {
 	f := newFakeCampfire(t)
 	_, err := run(t, f, "12-abcDEF123", "room", "list")
