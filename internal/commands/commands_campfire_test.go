@@ -407,6 +407,21 @@ func TestNormalizeBaseURL(t *testing.T) {
 	}
 }
 
+// The last page has no next link, but the messages cut from it still exist.
+func TestMessageListLimitOnTheLastPageStillPagesOn(t *testing.T) {
+	f := newFakeCampfire(t)
+	env, err := run(t, f, "tok", "message", "list", "--room", "4", "--after", "90", "--limit", "5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(t, env["data"]); len(got) != 5 || got[0] != 91 || got[4] != 95 {
+		t.Fatalf("ids = %v", got)
+	}
+	if p := env["context"].(map[string]any)["pagination"].(map[string]any); p["next"] != "--after 95" {
+		t.Errorf("pagination = %v", p)
+	}
+}
+
 func TestIDStringKeepsLargeIDsWhole(t *testing.T) {
 	for in, want := range map[any]string{float64(4): "4", float64(1234567): "1234567", "7": "7"} {
 		if got := idString(in); got != want {

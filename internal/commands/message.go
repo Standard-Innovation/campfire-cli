@@ -34,8 +34,8 @@ var messageListCmd = &cobra.Command{
 
 Without --before or --after, shows the latest page. --before ID pages back
 through older messages and --after ID forward through newer ones. --limit N
-keeps the newest N, fetching older pages as needed; --all fetches the whole
-history.`,
+keeps the newest N, or with --after the first N after ID, fetching more pages
+as needed; --all fetches the whole history.`,
 	Example: `$ campfire message list --room 4
 $ campfire message list --room Sam --limit 10
 $ campfire message list --room https://chat.example.com/rooms/4 --before 1200
@@ -86,10 +86,14 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 			// so the messages cut here aren't skipped.
 			if forward {
 				messages = messages[:cfgLimit]
-				cursor = "--after " + idString(toMap(messages[len(messages)-1])["id"])
+				if id := toMap(messages[len(messages)-1])["id"]; id != nil {
+					cursor = "--after " + idString(id)
+				}
 			} else {
 				messages = messages[len(messages)-cfgLimit:]
-				cursor = "--before " + idString(toMap(messages[0])["id"])
+				if id := toMap(messages[0])["id"]; id != nil {
+					cursor = "--before " + idString(id)
+				}
 			}
 		}
 
