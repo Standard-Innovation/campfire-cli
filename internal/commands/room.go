@@ -41,7 +41,7 @@ of the other people in it. Needs a personal access token.`,
 			{Header: "Type", Field: "type"},
 			{Header: "Involvement", Field: "involvement"},
 		}
-		printList(rooms, cols, countNoun(len(rooms), "room"), "", nil, []Breadcrumb{
+		printList(rooms, cols, countNoun(len(rooms), "room"), nil, []Breadcrumb{
 			breadcrumb("messages", "campfire message list --room <id>", "Read a room"),
 			breadcrumb("post", "campfire message post --room <id> \"Hello\"", "Post to a room"),
 		})

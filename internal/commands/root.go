@@ -450,9 +450,10 @@ func truncateData(data any) (any, int) {
 }
 
 // printList renders list data with format-aware dispatch. Applies --limit truncation.
-func printList(data any, cols render.Columns, summary, notice string, context map[string]any, breadcrumbs []Breadcrumb) {
+func printList(data any, cols render.Columns, summary string, context map[string]any, breadcrumbs []Breadcrumb) {
 	data, originalCount := truncateData(data)
-	if notice == "" && cfgLimit > 0 && originalCount > cfgLimit {
+	var notice string
+	if cfgLimit > 0 && originalCount > cfgLimit {
 		notice = fmt.Sprintf("Showing %d of %d results", cfgLimit, originalCount)
 	}
 

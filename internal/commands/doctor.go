@@ -39,7 +39,7 @@ var doctorCmd = &cobra.Command{
 			summary = countNoun(failed, "check") + " failed"
 		}
 
-		printList(checks, render.Columns{{Header: "Check", Field: "name"}, {Header: "Status", Field: "status"}, {Header: "Detail", Field: "message"}, {Header: "Hint", Field: "hint"}}, summary, "", nil, nil)
+		printList(checks, render.Columns{{Header: "Check", Field: "name"}, {Header: "Status", Field: "status"}, {Header: "Detail", Field: "message"}, {Header: "Hint", Field: "hint"}}, summary, nil, nil)
 		return nil
 	},
 }

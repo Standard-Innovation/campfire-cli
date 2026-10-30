@@ -121,7 +121,7 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 			{Header: "From", Field: "creator.name"},
 			{Header: "Message", Field: "body.plain_text"},
 		}
-		printList(messages, cols, countNoun(len(messages), "message"), "", context, breadcrumbs)
+		printList(messages, cols, countNoun(len(messages), "message"), context, breadcrumbs)
 		return nil
 	},
 }
