@@ -13,7 +13,10 @@ jobs:
       contents: read
 
   security:
+    name: Security scan
     uses: ./.github/workflows/security.yml # zizmor: ignore[self-repository] -- actionlint does not accept the $/ syntax yet
+    with:
+      sarif-upload-optional: true
     permissions:
       contents: read
       security-events: write
