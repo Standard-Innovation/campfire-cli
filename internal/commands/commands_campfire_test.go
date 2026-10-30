@@ -16,7 +16,8 @@ import (
 )
 
 // fakeCampfire serves the slice of the Campfire API the CLI uses. Room 4 holds
-// messages 1..100, served 40 to a page like Campfire does.
+// messages 1..100, served 40 to a page like Campfire does. Room 5 is the same
+// except that message 100 has no id.
 type fakeCampfire struct {
 	*httptest.Server
 	posts []map[string]any
@@ -50,7 +51,7 @@ func newFakeCampfire(t *testing.T) *fakeCampfire {
 		})
 	})
 	messages := func(w http.ResponseWriter, r *http.Request, nextPath string) {
-		if r.PathValue("room") != "4" && r.PathValue("room") != "7" {
+		if r.PathValue("room") != "4" && r.PathValue("room") != "5" && r.PathValue("room") != "7" {
 			http.NotFound(w, r)
 			return
 		}
@@ -65,7 +66,11 @@ func newFakeCampfire(t *testing.T) *fakeCampfire {
 		}
 		page := []any{}
 		for id := lo; id <= hi; id++ {
-			page = append(page, map[string]any{"id": id, "body": map[string]any{"plain_text": fmt.Sprintf("m%d", id)}, "creator": map[string]any{"name": "Sam"}})
+			m := map[string]any{"id": id, "body": map[string]any{"plain_text": fmt.Sprintf("m%d", id)}, "creator": map[string]any{"name": "Sam"}}
+			if r.PathValue("room") == "5" && id == 100 {
+				delete(m, "id")
+			}
+			page = append(page, m)
 		}
 		w.Header().Set("X-Total-Count", "100")
 		switch {
@@ -219,6 +224,32 @@ func TestMessageListLimitForwardPagesOnFromTheLastKept(t *testing.T) {
 	}
 	if env["summary"] != "1 message" {
 		t.Errorf("summary = %v", env["summary"])
+	}
+}
+
+// The last page has no next link, but the messages cut from it still exist.
+func TestMessageListLimitOnTheLastPageStillPagesOn(t *testing.T) {
+	f := newFakeCampfire(t)
+	env, err := run(t, f, "tok", "message", "list", "--room", "4", "--after", "90", "--limit", "5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(t, env["data"]); len(got) != 5 || got[0] != 91 || got[4] != 95 {
+		t.Fatalf("ids = %v", got)
+	}
+	if p := env["context"].(map[string]any)["pagination"].(map[string]any); p["next"] != "--after 95" {
+		t.Errorf("pagination = %v", p)
+	}
+}
+
+func TestMessageListLimitFallsBackToTheServerCursorWithoutAnID(t *testing.T) {
+	f := newFakeCampfire(t)
+	env, err := run(t, f, "tok", "message", "list", "--room", "5", "--limit", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := env["context"].(map[string]any)["pagination"].(map[string]any); p["next"] != "--before 61" {
+		t.Errorf("pagination = %v", p)
 	}
 }
 
@@ -404,21 +435,6 @@ func TestNormalizeBaseURL(t *testing.T) {
 	}
 	if _, err := normalizeBaseURL("http://chat.example.com"); err == nil {
 		t.Error("expected plain http to be refused for a remote host")
-	}
-}
-
-// The last page has no next link, but the messages cut from it still exist.
-func TestMessageListLimitOnTheLastPageStillPagesOn(t *testing.T) {
-	f := newFakeCampfire(t)
-	env, err := run(t, f, "tok", "message", "list", "--room", "4", "--after", "90", "--limit", "5")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := ids(t, env["data"]); len(got) != 5 || got[0] != 91 || got[4] != 95 {
-		t.Fatalf("ids = %v", got)
-	}
-	if p := env["context"].(map[string]any)["pagination"].(map[string]any); p["next"] != "--after 95" {
-		t.Errorf("pagination = %v", p)
 	}
 }
 

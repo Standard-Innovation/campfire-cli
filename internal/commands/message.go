@@ -87,12 +87,12 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 			if forward {
 				messages = messages[:cfgLimit]
 				if id := toMap(messages[len(messages)-1])["id"]; id != nil {
-					cursor = "--after " + idString(id)
+					cursor = cursorFlag("after", idString(id))
 				}
 			} else {
 				messages = messages[len(messages)-cfgLimit:]
 				if id := toMap(messages[0])["id"]; id != nil {
-					cursor = "--before " + idString(id)
+					cursor = cursorFlag("before", idString(id))
 				}
 			}
 		}
@@ -137,12 +137,17 @@ func pageCursor(next string) string {
 	}
 	q := u.Query()
 	if before := q.Get("before"); before != "" {
-		return "--before " + before
+		return cursorFlag("before", before)
 	}
 	if after := q.Get("after"); after != "" {
-		return "--after " + after
+		return cursorFlag("after", after)
 	}
 	return ""
+}
+
+// cursorFlag is the message list flag that pages on from id.
+func cursorFlag(direction, id string) string {
+	return "--" + direction + " " + id
 }
 
 var (
