@@ -193,6 +193,33 @@ func TestMessageListLimitFetchesOlderPagesAndKeepsNewest(t *testing.T) {
 	if len(got) != 50 || got[0] != 51 || got[49] != 100 {
 		t.Fatalf("ids = %v..%v (%d)", got[0], got[len(got)-1], len(got))
 	}
+	// Two pages fetched 21..100; paging on must start below the kept 51, not 21.
+	if p := env["context"].(map[string]any)["pagination"].(map[string]any); p["next"] != "--before 51" {
+		t.Errorf("pagination = %v", p)
+	}
+	if env["summary"] != "50 messages" {
+		t.Errorf("summary = %v", env["summary"])
+	}
+	if _, ok := env["notice"]; ok {
+		t.Errorf("notice = %v", env["notice"])
+	}
+}
+
+func TestMessageListLimitForwardPagesOnFromTheLastKept(t *testing.T) {
+	f := newFakeCampfire(t)
+	env, err := run(t, f, "tok", "message", "list", "--room", "4", "--after", "10", "--limit", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(t, env["data"]); len(got) != 1 || got[0] != 11 {
+		t.Fatalf("ids = %v", got)
+	}
+	if p := env["context"].(map[string]any)["pagination"].(map[string]any); p["next"] != "--after 11" {
+		t.Errorf("pagination = %v", p)
+	}
+	if env["summary"] != "1 message" {
+		t.Errorf("summary = %v", env["summary"])
+	}
 }
 
 func TestMessageListAllIsChronological(t *testing.T) {
@@ -377,5 +404,13 @@ func TestNormalizeBaseURL(t *testing.T) {
 	}
 	if _, err := normalizeBaseURL("http://chat.example.com"); err == nil {
 		t.Error("expected plain http to be refused for a remote host")
+	}
+}
+
+func TestIDStringKeepsLargeIDsWhole(t *testing.T) {
+	for in, want := range map[any]string{float64(4): "4", float64(1234567): "1234567", "7": "7"} {
+		if got := idString(in); got != want {
+			t.Errorf("idString(%v) = %q, want %q", in, got, want)
+		}
 	}
 }

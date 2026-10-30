@@ -41,7 +41,7 @@ of the other people in it. Needs a personal access token.`,
 			{Header: "Type", Field: "type"},
 			{Header: "Involvement", Field: "involvement"},
 		}
-		printList(rooms, cols, fmt.Sprintf("%d rooms", len(rooms)), "", nil, []Breadcrumb{
+		printList(rooms, cols, countNoun(len(rooms), "room"), "", nil, []Breadcrumb{
 			breadcrumb("messages", "campfire message list --room <id>", "Read a room"),
 			breadcrumb("post", "campfire message post --room <id> \"Hello\"", "Post to a room"),
 		})
@@ -60,7 +60,7 @@ func fetchRooms() ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	myID := fmt.Sprint(toMap(me.Data)["id"])
+	myID := idString(toMap(me.Data)["id"])
 	rooms, _ := resp.Data.([]any)
 	for _, r := range rooms {
 		if room, ok := r.(map[string]any); ok {
@@ -80,7 +80,7 @@ func roomDisplayName(room map[string]any, myID string) string {
 	names := make([]string, 0, len(users))
 	for _, u := range users {
 		user, ok := u.(map[string]any)
-		if !ok || fmt.Sprint(user["id"]) == myID {
+		if !ok || idString(user["id"]) == myID {
 			continue
 		}
 		if name, ok := user["name"].(string); ok {
@@ -88,7 +88,7 @@ func roomDisplayName(room map[string]any, myID string) string {
 		}
 	}
 	if len(names) == 0 {
-		return fmt.Sprintf("Room %v", room["id"])
+		return "Room " + idString(room["id"])
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
@@ -133,11 +133,11 @@ func resolveRoom(arg string) (string, error) {
 	case 0:
 		return "", output.ErrNotFoundHint("room", arg, "Run 'campfire room list' to see your rooms")
 	case 1:
-		return fmt.Sprint(matches[0]["id"]), nil
+		return idString(matches[0]["id"]), nil
 	default:
 		names := make([]string, len(matches))
 		for i, m := range matches {
-			names[i] = fmt.Sprintf("%v (%v)", m["display_name"], m["id"])
+			names[i] = fmt.Sprintf("%v (%s)", m["display_name"], idString(m["id"]))
 		}
 		return "", output.ErrAmbiguous("room", names)
 	}

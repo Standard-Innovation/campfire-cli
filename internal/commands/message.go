@@ -80,13 +80,16 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 			next = page.LinkNext
 		}
 
-		notice := ""
+		cursor := pageCursor(next)
 		if cfgLimit > 0 && len(messages) > cfgLimit {
-			notice = fmt.Sprintf("Showing %d of %d fetched messages", cfgLimit, len(messages))
+			// Page on from the last message kept, not the last one fetched,
+			// so the messages cut here aren't skipped.
 			if forward {
 				messages = messages[:cfgLimit]
+				cursor = "--after " + idString(toMap(messages[len(messages)-1])["id"])
 			} else {
 				messages = messages[len(messages)-cfgLimit:]
+				cursor = "--before " + idString(toMap(messages[0])["id"])
 			}
 		}
 
@@ -97,7 +100,7 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 		breadcrumbs := []Breadcrumb{
 			breadcrumb("post", fmt.Sprintf("campfire message post --room %s \"...\"", roomID), "Reply in this room"),
 		}
-		if cursor := pageCursor(next); cursor != "" {
+		if cursor != "" {
 			context["pagination"] = map[string]any{"has_next": true, "next": cursor}
 			direction := "older"
 			if forward {
@@ -113,7 +116,7 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 			{Header: "From", Field: "creator.name"},
 			{Header: "Message", Field: "body.plain_text"},
 		}
-		printList(messages, cols, fmt.Sprintf("%d messages", len(messages)), notice, context, breadcrumbs)
+		printList(messages, cols, countNoun(len(messages), "message"), "", context, breadcrumbs)
 		return nil
 	},
 }

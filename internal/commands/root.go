@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -681,6 +682,23 @@ func toMap(data any) map[string]any {
 		return m
 	}
 	return nil
+}
+
+// countNoun is "1 message" or "2 messages".
+func countNoun(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// idString formats a JSON id, which decodes as a float64: %v would print one
+// of a million or more in exponent form.
+func idString(v any) string {
+	if f, ok := v.(float64); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
 }
 
 // credsSaveProfileToken JSON-encodes a credential and saves it under a
