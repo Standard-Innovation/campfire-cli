@@ -83,7 +83,8 @@ $ campfire message list --room 4 --jq '.data[] | "\(.creator.name): \(.body.plai
 		cursor := pageCursor(next)
 		if cfgLimit > 0 && len(messages) > cfgLimit {
 			// Page on from the last message kept, not the last one fetched,
-			// so the messages cut here aren't skipped.
+			// so the messages cut here aren't skipped. A message without an
+			// id leaves the server's cursor, which does skip them.
 			if forward {
 				messages = messages[:cfgLimit]
 				if id := toMap(messages[len(messages)-1])["id"]; id != nil {

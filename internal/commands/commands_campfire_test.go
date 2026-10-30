@@ -17,7 +17,7 @@ import (
 
 // fakeCampfire serves the slice of the Campfire API the CLI uses. Room 4 holds
 // messages 1..100, served 40 to a page like Campfire does. Room 5 is the same
-// except that message 100 has no id.
+// except that messages 11 and 100 have no id.
 type fakeCampfire struct {
 	*httptest.Server
 	posts []map[string]any
@@ -67,7 +67,7 @@ func newFakeCampfire(t *testing.T) *fakeCampfire {
 		page := []any{}
 		for id := lo; id <= hi; id++ {
 			m := map[string]any{"id": id, "body": map[string]any{"plain_text": fmt.Sprintf("m%d", id)}, "creator": map[string]any{"name": "Sam"}}
-			if r.PathValue("room") == "5" && id == 100 {
+			if r.PathValue("room") == "5" && (id == 11 || id == 100) {
 				delete(m, "id")
 			}
 			page = append(page, m)
@@ -244,12 +244,14 @@ func TestMessageListLimitOnTheLastPageStillPagesOn(t *testing.T) {
 
 func TestMessageListLimitFallsBackToTheServerCursorWithoutAnID(t *testing.T) {
 	f := newFakeCampfire(t)
-	env, err := run(t, f, "tok", "message", "list", "--room", "5", "--limit", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p := env["context"].(map[string]any)["pagination"].(map[string]any); p["next"] != "--before 61" {
-		t.Errorf("pagination = %v", p)
+	for args, want := range map[string]string{"--limit 1": "--before 61", "--after 10 --limit 1": "--after 50"} {
+		env, err := run(t, f, "tok", append([]string{"message", "list", "--room", "5"}, strings.Fields(args)...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p := env["context"].(map[string]any)["pagination"].(map[string]any); p["next"] != want {
+			t.Errorf("%s: pagination = %v, want %s", args, p, want)
+		}
 	}
 }
 
