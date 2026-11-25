@@ -55,14 +55,18 @@ var botCreateCmd = &cobra.Command{
 	Short: "Create a bot and show its key once",
 	Long: `Creates a bot and prints its key. Campfire shows the key only now.
 
---quiet prints the key alone, so it can go straight into a secret manager.`,
+--quiet prints the key alone: pipe it straight into a secret manager that reads
+stdin, in one command. With --agent, pass --quiet (or --jq).`,
 	Example: `$ campfire bot create --name "Deploy Bot"
-$ key=$(campfire bot create --name "Deploy Bot" --quiet)`,
+$ campfire bot create --name "Deploy Bot" --quiet | gh secret set DEPLOY_BOT_KEY`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := strings.TrimSpace(botCreateName)
 		if name == "" {
 			return errors.NewInvalidArgsError("No bot name given. Pass --name")
+		}
+		if err := requireKeyOutput(); err != nil {
+			return err
 		}
 		if err := requireAuth(); err != nil {
 			return err
@@ -71,43 +75,53 @@ $ key=$(campfire bot create --name "Deploy Bot" --quiet)`,
 		if err != nil {
 			return explainWriteError(err, botForbidden, "Campfire rejected the bot: it needs a name")
 		}
-		printBotKey(resp.Data, "Created bot")
-		return nil
+		return printBotKey(resp.Data, "Created bot")
 	},
 }
 
 var botRekeyCmd = &cobra.Command{
 	Use:   "rekey <id>",
 	Short: "Make a new key for a bot and show it once",
-	Long: `Replaces a bot's key and prints the new one. The old key stops working at once,
-and Campfire shows the new key only now.
+	Long: `Replaces a bot's key and prints the new one. The current key stops working at
+once, and Campfire shows the new key only now. Asks first unless --yes.
 
---quiet prints the key alone, so it can go straight into a secret manager.`,
-	Example: "$ campfire bot rekey 12\n$ key=$(campfire bot rekey 12 --quiet)",
+The request is not retried. On failure, rekey again.
+
+--quiet prints the key alone: pipe it straight into a secret manager that reads
+stdin, in one command. With --agent, pass --quiet (or --jq).`,
+	Example: "$ campfire bot rekey 12\n$ campfire bot rekey 12 --yes --quiet | gh secret set DEPLOY_BOT_KEY",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		botID, err := requireID(args[0], "bot")
 		if err != nil {
 			return err
 		}
+		if err = requireKeyOutput(); err != nil {
+			return err
+		}
 		if err = requireAuth(); err != nil {
+			return err
+		}
+		if err = confirmDestructive(fmt.Sprintf("Rekey bot %s? Its current key stops working now.", botID), botRekeyYes); err != nil {
 			return err
 		}
 		resp, err := getCampfire().RekeyBot(botID)
 		if err != nil {
 			return explainWriteError(err, botForbidden, "")
 		}
-		printBotKey(resp.Data, "New key for bot")
-		return nil
+		return printBotKey(resp.Data, "New key for bot")
 	},
 }
 
-var botDeleteYes bool
+var (
+	botRekeyYes  bool
+	botDeleteYes bool
+)
 
 var botDeleteCmd = &cobra.Command{
 	Use:     "delete <id>",
 	Short:   "Delete a bot",
-	Long:    "Deactivates a bot: its key stops working and it leaves the bot list. Asks first unless --yes or --agent.",
+	Long:    "Deactivates a bot: its key stops working and it leaves the bot list. Asks first unless --yes.",
 	Example: "$ campfire bot delete 12\n$ campfire bot delete 12 --yes",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -131,12 +145,24 @@ var botDeleteCmd = &cobra.Command{
 	},
 }
 
+// requireKeyOutput refuses --agent's default output for a bot key, which an
+// agent would read into its context: it must ask for the key alone.
+func requireKeyOutput() error {
+	if cfgAgent && !cfgQuiet && cfgJQ == "" {
+		return errors.NewInvalidArgsError("Bot keys are shown once: pass --quiet and pipe it straight into a secret manager")
+	}
+	return nil
+}
+
 // printBotKey shows a bot with its key. The key is a secret Campfire shows only
 // once: --quiet prints it alone for piping into a secret manager, and human
 // output says so before printing it on a line of its own.
-func printBotKey(data any, summary string) {
+func printBotKey(data any, summary string) error {
 	bot := toMap(data)
 	key, _ := bot["bot_key"].(string)
+	if key == "" {
+		return errors.NewError("Campfire returned no bot key")
+	}
 	id := idString(bot["id"])
 	breadcrumbs := []Breadcrumb{
 		breadcrumb("room", fmt.Sprintf("campfire room create --name \"...\" --member %s", id), "Make a room for the bot"),
@@ -151,6 +177,7 @@ func printBotKey(data any, summary string) {
 	default:
 		printMutation(bot, fmt.Sprintf("%s %s", summary, id), "", breadcrumbs)
 	}
+	return nil
 }
 
 // requireID checks that an argument is a numeric ID before it goes into a path.
@@ -170,6 +197,7 @@ func init() {
 	botCreateCmd.Flags().StringVar(&botCreateName, "name", "", "Bot name")
 	botCmd.AddCommand(botCreateCmd)
 
+	botRekeyCmd.Flags().BoolVarP(&botRekeyYes, "yes", "y", false, "Rekey without asking")
 	botCmd.AddCommand(botRekeyCmd)
 
 	botDeleteCmd.Flags().BoolVarP(&botDeleteYes, "yes", "y", false, "Delete without asking")

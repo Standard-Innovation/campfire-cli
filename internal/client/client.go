@@ -59,7 +59,7 @@ func New(baseURL, token string) *Client {
 func (c *Client) buildURL(path string) (string, error) {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		if !sameOrigin(path, c.BaseURL) {
-			return "", errors.NewError(fmt.Sprintf("Refusing to follow %s: not on %s", path, c.BaseURL))
+			return "", errors.NewError(fmt.Sprintf("Refusing to follow %s: not on %s", RedactBotKeys(path), c.BaseURL))
 		}
 		return path, nil
 	}
@@ -78,46 +78,54 @@ func sameOrigin(a, b string) bool {
 
 // Get performs a GET request.
 func (c *Client) Get(path string) (*APIResponse, error) {
-	return c.request("GET", path, nil)
+	return c.request("GET", path, nil, true)
 }
 
 // Post performs a POST request with JSON body.
 func (c *Client) Post(path string, body any) (*APIResponse, error) {
-	return c.request("POST", path, body)
+	return c.request("POST", path, body, false)
 }
 
 // Patch performs a PATCH request with JSON body.
 func (c *Client) Patch(path string, body any) (*APIResponse, error) {
-	return c.request("PATCH", path, body)
+	return c.request("PATCH", path, body, false)
 }
 
 // Put performs a PUT request with JSON body.
 func (c *Client) Put(path string, body any) (*APIResponse, error) {
-	return c.request("PUT", path, body)
+	return c.request("PUT", path, body, true)
+}
+
+// PutOnce performs a PUT request that is never retried after a server or
+// network error, for a change whose result is shown only once.
+func (c *Client) PutOnce(path string, body any) (*APIResponse, error) {
+	return c.request("PUT", path, body, false)
 }
 
 // Delete performs a DELETE request.
 func (c *Client) Delete(path string) (*APIResponse, error) {
-	return c.request("DELETE", path, nil)
+	return c.request("DELETE", path, nil, true)
 }
 
 // PostText performs a POST request with a plain-text body, as Campfire's bot API expects.
 func (c *Client) PostText(path, text string) (*APIResponse, error) {
-	return c.send("POST", path, strings.NewReader(text), "text/plain; charset=utf-8")
+	return c.send("POST", path, strings.NewReader(text), "text/plain; charset=utf-8", false)
 }
 
-func (c *Client) request(method, path string, body any) (*APIResponse, error) {
+// request sends a JSON request. retry allows retrying after a 5xx or a
+// network error; a 429 is always retried, as the server did nothing.
+func (c *Client) request(method, path string, body any, retry bool) (*APIResponse, error) {
 	if body == nil {
-		return c.send(method, path, nil, "")
+		return c.send(method, path, nil, "", retry)
 	}
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, errors.NewError(fmt.Sprintf("Failed to marshal request body: %v", err))
 	}
-	return c.send(method, path, bytes.NewReader(jsonBody), "application/json")
+	return c.send(method, path, bytes.NewReader(jsonBody), "application/json", retry)
 }
 
-func (c *Client) send(method, path string, reqBody io.Reader, contentType string) (*APIResponse, error) {
+func (c *Client) send(method, path string, reqBody io.Reader, contentType string, retry bool) (*APIResponse, error) {
 	requestURL, err := c.buildURL(path)
 	if err != nil {
 		return nil, err
@@ -125,7 +133,7 @@ func (c *Client) send(method, path string, reqBody io.Reader, contentType string
 
 	req, err := http.NewRequestWithContext(context.Background(), method, requestURL, reqBody)
 	if err != nil {
-		return nil, errors.NewNetworkError(fmt.Sprintf("Failed to create request: %v", err))
+		return nil, errors.NewNetworkError(RedactBotKeys(fmt.Sprintf("Failed to create request: %v", err)))
 	}
 
 	c.setHeaders(req)
@@ -137,9 +145,9 @@ func (c *Client) send(method, path string, reqBody io.Reader, contentType string
 		fmt.Fprintf(os.Stderr, "> %s %s\n", method, RedactBotKeys(requestURL))
 	}
 
-	resp, err := c.doWithRetry(req)
+	resp, err := c.doWithRetry(req, retry)
 	if err != nil {
-		return nil, errors.NewNetworkError(fmt.Sprintf("Request failed: %v", err))
+		return nil, errors.NewNetworkError(RedactBotKeys(fmt.Sprintf("Request failed: %v", err)))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -197,9 +205,8 @@ const maxRetries = 3
 var linkNextRe = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
 
 // doWithRetry wraps HTTPClient.Do with retry logic for 429 and 5xx responses.
-// Only retries GET/DELETE/PUT on 5xx; POST/PATCH only retry on 429.
-func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
-	idempotent := req.Method == "GET" || req.Method == "DELETE" || req.Method == "PUT"
+// Only retries idempotent requests on 5xx or a network error; the others only on 429.
+func (c *Client) doWithRetry(req *http.Request, idempotent bool) (*http.Response, error) {
 
 	for attempt := range maxRetries + 1 {
 		resp, err := c.HTTPClient.Do(req)

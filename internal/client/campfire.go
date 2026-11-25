@@ -119,12 +119,13 @@ func (cf *Campfire) CreateBot(name string) (*APIResponse, error) {
 	})
 }
 
-// RekeyBot replaces a bot's key. The response holds the new key.
+// RekeyBot replaces a bot's key. The response holds the new key. It is not
+// retried: a retry after a lost response would replace a key no one has seen.
 func (cf *Campfire) RekeyBot(botID string) (*APIResponse, error) {
 	if cf.IsBot() {
 		return nil, ErrNeedsToken("Rekeying a bot")
 	}
-	return cf.API.Put(fmt.Sprintf("/account/bots/%s/key.json", url.PathEscape(botID)), nil)
+	return cf.API.PutOnce(fmt.Sprintf("/account/bots/%s/key.json", url.PathEscape(botID)), nil)
 }
 
 // DeleteBot deactivates a bot.

@@ -20,6 +20,7 @@ import (
 // messages 1..100, served 40 to a page like Campfire does. Room 5 is the same
 // except that messages 11 and 100 have no id. Bot and room writes are recorded
 // in writes; the token "member" belongs to someone who is not an administrator.
+// Its PUT to closed rooms accepts any room, so the CLI must check the type.
 type fakeCampfire struct {
 	*httptest.Server
 	posts  []map[string]any
@@ -60,7 +61,9 @@ func newFakeCampfire(t *testing.T) *fakeCampfire {
 				map[string]any{"id": 1, "name": "Tom"}, map[string]any{"id": 2, "name": "Sam"}, map[string]any{"id": 3, "name": "Ana"},
 			}},
 			map[string]any{"id": 9, "name": "Ops", "type": "open", "involvement": "mentions"},
-			map[string]any{"id": 10, "name": "ops", "type": "closed", "involvement": "everything"},
+			map[string]any{"id": 10, "name": "ops", "type": "closed", "involvement": "everything", "users": []any{
+				map[string]any{"id": 1, "name": "Tom"}, map[string]any{"id": 2, "name": "Sam"}, map[string]any{"id": 3, "name": "Ana"},
+			}},
 		})
 	})
 	messages := func(w http.ResponseWriter, r *http.Request, nextPath string) {
@@ -135,6 +138,10 @@ func newFakeCampfire(t *testing.T) *fakeCampfire {
 		case "":
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			return
+		case "Keyless":
+			w.WriteHeader(http.StatusCreated)
+			writeJSON(w, map[string]any{"id": 14, "name": name})
+			return
 		case "Taken":
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			writeJSON(w, map[string]any{"status": 422, "error": "Name has already been taken"})
@@ -177,10 +184,6 @@ func newFakeCampfire(t *testing.T) *fakeCampfire {
 			return
 		}
 		body := f.record(r)
-		if r.PathValue("id") == "4.json" {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			return
-		}
 		writeJSON(w, map[string]any{"id": 10, "name": toMap(body["room"])["name"], "type": "closed"})
 	})
 
@@ -190,7 +193,7 @@ func newFakeCampfire(t *testing.T) *fakeCampfire {
 }
 
 func (f *fakeCampfire) authorized(w http.ResponseWriter, r *http.Request) bool {
-	if r.Header.Get("Authorization") != "Bearer tok" {
+	if auth := r.Header.Get("Authorization"); auth != "Bearer tok" && auth != "Bearer member" {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="Application"`)
 		http.Error(w, "HTTP Token: Access denied.", http.StatusUnauthorized)
 		return false
@@ -199,7 +202,7 @@ func (f *fakeCampfire) authorized(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // administrator lets "tok" through, refuses "member" with a bare 403, and
-// answers anything else 401.
+// answers anything else 401. authorized lets both through.
 func (f *fakeCampfire) administrator(w http.ResponseWriter, r *http.Request) bool {
 	if r.Header.Get("Authorization") == "Bearer member" {
 		w.WriteHeader(http.StatusForbidden)
@@ -663,7 +666,7 @@ func TestBotCreateNeedsAName(t *testing.T) {
 
 func TestBotRekeyQuietPrintsOnlyTheNewKey(t *testing.T) {
 	f := newFakeCampfire(t)
-	out, err := runRaw(t, f, "tok", "bot", "rekey", "12", "--quiet")
+	out, err := runRaw(t, f, "tok", "bot", "rekey", "12", "--yes", "--quiet")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,7 +680,7 @@ func TestBotRekeyQuietPrintsOnlyTheNewKey(t *testing.T) {
 
 func TestBotRekeyIDsOnlyPrintsTheBotID(t *testing.T) {
 	f := newFakeCampfire(t)
-	out, err := runRaw(t, f, "tok", "bot", "rekey", "12", "--ids-only")
+	out, err := runRaw(t, f, "tok", "bot", "rekey", "12", "--yes", "--ids-only")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,7 +704,7 @@ func TestBotVerboseNeverLogsTheKey(t *testing.T) {
 	f := newFakeCampfire(t)
 	for _, args := range [][]string{
 		{"bot", "create", "--name", "Deploy Bot", "--verbose", "--json"},
-		{"bot", "rekey", "12", "--verbose", "--json"},
+		{"bot", "rekey", "12", "--yes", "--verbose", "--json"},
 	} {
 		var err error
 		stderr := captureStderr(t, func() { _, err = runRaw(t, f, "tok", args...) })
@@ -719,21 +722,80 @@ func TestBotVerboseNeverLogsTheKey(t *testing.T) {
 
 func TestBotDeleteAsksFirst(t *testing.T) {
 	f := newFakeCampfire(t)
-	_, err := run(t, f, "tok", "bot", "delete", "12")
-	if e := output.AsError(err); err == nil || e.Code != output.CodeUsage || !strings.Contains(e.Message, "--yes") {
-		t.Fatalf("got %v", err)
+	for _, args := range [][]string{{"bot", "delete", "12"}, {"bot", "delete", "12", "--agent"}} {
+		_, err := run(t, f, "tok", args...)
+		if e := output.AsError(err); err == nil || e.Code != output.CodeUsage || !strings.Contains(e.Message, "Pass --yes to confirm") {
+			t.Fatalf("%v: got %v", args, err)
+		}
 	}
 	if len(f.writes) != 0 {
 		t.Fatalf("deleted without confirmation: %v", f.writes)
 	}
 
-	for _, flag := range []string{"--yes", "--agent"} {
+	for _, flags := range [][]string{{"--yes"}, {"--agent", "--yes"}} {
 		f.writes = nil
-		if _, err := runRaw(t, f, "tok", "bot", "delete", "12", flag); err != nil {
-			t.Fatalf("%s: %v", flag, err)
+		if _, err := runRaw(t, f, "tok", append([]string{"bot", "delete", "12"}, flags...)...); err != nil {
+			t.Fatalf("%v: %v", flags, err)
 		}
 		if w := lastWrite(t, f); w.method != "DELETE" || w.path != "/account/bots/12.json" {
-			t.Errorf("%s: write = %+v", flag, w)
+			t.Errorf("%v: write = %+v", flags, w)
+		}
+	}
+}
+
+func TestBotRekeyAsksFirst(t *testing.T) {
+	f := newFakeCampfire(t)
+	for _, args := range [][]string{{"bot", "rekey", "12"}, {"bot", "rekey", "12", "--agent", "--quiet"}} {
+		_, err := run(t, f, "tok", args...)
+		e := output.AsError(err)
+		if err == nil || e.Code != output.CodeUsage || !strings.Contains(e.Message, "current key stops working") {
+			t.Fatalf("%v: got %v", args, err)
+		}
+	}
+	if len(f.writes) != 0 {
+		t.Fatalf("rekeyed without confirmation: %v", f.writes)
+	}
+}
+
+func TestBotKeyWithAgentNeedsQuietOrJQ(t *testing.T) {
+	f := newFakeCampfire(t)
+	for _, args := range [][]string{
+		{"bot", "create", "--name", "Deploy Bot", "--agent"},
+		{"bot", "rekey", "12", "--yes", "--agent"},
+	} {
+		_, err := run(t, f, "tok", args...)
+		if e := output.AsError(err); err == nil || e.Code != output.CodeUsage || !strings.Contains(e.Message, "--quiet") {
+			t.Fatalf("%v: got %v", args, err)
+		}
+	}
+	if len(f.writes) != 0 {
+		t.Fatalf("writes = %v", f.writes)
+	}
+
+	for args, want := range map[string]string{
+		"bot create --name Bot --agent --quiet":       fakeBotKey + "\n",
+		"bot create --name Bot --agent --jq .bot_key": fakeBotKey + "\n",
+		"bot rekey 12 --yes --agent --quiet":          fakeNewBotKey + "\n",
+	} {
+		out, err := runRaw(t, f, "tok", strings.Fields(args)...)
+		if err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+		if out != want {
+			t.Errorf("%s: output = %q, want %q", args, out, want)
+		}
+	}
+}
+
+func TestBotCreateWithoutAKeyInTheResponseFails(t *testing.T) {
+	f := newFakeCampfire(t)
+	for _, format := range []string{"--quiet", "--styled", "--json"} {
+		out, err := runRaw(t, f, "tok", "bot", "create", "--name", "Keyless", format)
+		if err == nil || !strings.Contains(err.Error(), "no bot key") {
+			t.Errorf("%s: got %v", format, err)
+		}
+		if out != "" {
+			t.Errorf("%s: output = %q", format, out)
 		}
 	}
 }
@@ -754,7 +816,7 @@ func TestBotForbiddenExplainsTheTokenNeeded(t *testing.T) {
 	for _, args := range [][]string{
 		{"bot", "list"},
 		{"bot", "create", "--name", "x"},
-		{"bot", "rekey", "12"},
+		{"bot", "rekey", "12", "--yes"},
 		{"bot", "delete", "12", "--yes"},
 	} {
 		_, err := run(t, f, "member", args...)
@@ -843,27 +905,34 @@ func TestRoomCreateRefusesOpenWithMembersAndBadIDs(t *testing.T) {
 	}
 }
 
-func TestRoomCreateAndUpdatePrintTheIDForQuietAndIDsOnly(t *testing.T) {
+func TestRoomCreateAndUpdateOutputModes(t *testing.T) {
 	f := newFakeCampfire(t)
-	for args, want := range map[string]string{
-		"room create --name Deploys --quiet":              "21\n",
-		"room create --name Deploys --ids-only":           "21\n",
-		"room update 10 --name Ops --member 2 --quiet":    "10\n",
-		"room update 10 --name Ops --member 2 --ids-only": "10\n",
+	for _, c := range []struct{ args, id string }{
+		{"room create --name Deploys", "21"},
+		{"room update 10 --name Ops --member 2 --yes", "10"},
 	} {
-		out, err := runRaw(t, f, "tok", strings.Fields(args)...)
+		out, err := runRaw(t, f, "tok", append(strings.Fields(c.args), "--ids-only")...)
 		if err != nil {
-			t.Fatalf("%s: %v", args, err)
+			t.Fatalf("%s: %v", c.args, err)
 		}
-		if out != want {
-			t.Errorf("%s: output = %q, want %q", args, out, want)
+		if out != c.id+"\n" {
+			t.Errorf("%s --ids-only: output = %q", c.args, out)
+		}
+
+		out, err = runRaw(t, f, "tok", append(strings.Fields(c.args), "--quiet")...)
+		if err != nil {
+			t.Fatalf("%s: %v", c.args, err)
+		}
+		var room map[string]any
+		if err := json.Unmarshal([]byte(out), &room); err != nil || idString(room["id"]) != c.id {
+			t.Errorf("%s --quiet: output = %q", c.args, out)
 		}
 	}
 }
 
 func TestRoomUpdateReplacesMembersAndKeepsTheName(t *testing.T) {
 	f := newFakeCampfire(t)
-	env, err := run(t, f, "tok", "room", "update", "10", "--member", "2", "--member", "12")
+	env, err := run(t, f, "tok", "room", "update", "https://chat.example.com/rooms/10", "--member", "2", "--member", "12", "--yes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -884,7 +953,7 @@ func TestRoomUpdateReplacesMembersAndKeepsTheName(t *testing.T) {
 
 func TestRoomUpdateRenames(t *testing.T) {
 	f := newFakeCampfire(t)
-	if _, err := run(t, f, "tok", "room", "update", "10", "--name", "Releases", "--member", "2"); err != nil {
+	if _, err := run(t, f, "tok", "room", "update", "10", "--name", "Releases", "--member", "2", "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	if name := toMap(lastWrite(t, f).body["room"])["name"]; name != "Releases" {
@@ -894,7 +963,7 @@ func TestRoomUpdateRenames(t *testing.T) {
 
 func TestRoomUpdateNeedsMembers(t *testing.T) {
 	f := newFakeCampfire(t)
-	_, err := run(t, f, "tok", "room", "update", "10", "--name", "Releases")
+	_, err := run(t, f, "tok", "room", "update", "10", "--name", "Releases", "--yes")
 	if e := output.AsError(err); err == nil || e.Code != output.CodeUsage {
 		t.Fatalf("got %v", err)
 	}
@@ -903,12 +972,55 @@ func TestRoomUpdateNeedsMembers(t *testing.T) {
 	}
 }
 
-func TestRoomUpdateOfAnOpenRoomExplainsTheRefusal(t *testing.T) {
+// The fake accepts a PUT to any room, as an older Campfire would, so the CLI
+// itself must refuse to turn an open room into a closed one.
+func TestRoomUpdateRefusesAnOpenRoomWithoutWriting(t *testing.T) {
 	f := newFakeCampfire(t)
-	_, err := run(t, f, "tok", "room", "update", "4", "--name", "General", "--member", "2")
-	e := output.AsError(err)
-	if err == nil || e.HTTPStatus != 422 || !strings.Contains(e.Message, "Open rooms") {
-		t.Fatalf("got %v (%q)", err, e.Message)
+	for _, room := range []string{"9", "General"} {
+		_, err := run(t, f, "tok", "room", "update", room, "--member", "2", "--yes")
+		e := output.AsError(err)
+		if err == nil || e.Code != output.CodeUsage || !strings.Contains(e.Message, "is open, not closed") {
+			t.Fatalf("%s: got %v", room, err)
+		}
+	}
+	if len(f.writes) != 0 {
+		t.Fatalf("writes = %v", f.writes)
+	}
+}
+
+func TestRoomUpdateOfAnUnknownRoomIsNotFound(t *testing.T) {
+	f := newFakeCampfire(t)
+	_, err := run(t, f, "tok", "room", "update", "99", "--member", "2", "--yes")
+	if e := output.AsError(err); err == nil || e.Code != output.CodeNotFound {
+		t.Fatalf("got %v", err)
+	}
+	if len(f.writes) != 0 {
+		t.Fatalf("writes = %v", f.writes)
+	}
+}
+
+func TestRoomUpdateAsksFirstNamingWhoIsRemoved(t *testing.T) {
+	f := newFakeCampfire(t)
+	for _, args := range [][]string{
+		{"room", "update", "10", "--member", "2"},
+		{"room", "update", "10", "--member", "2", "--agent"},
+	} {
+		_, err := run(t, f, "tok", args...)
+		e := output.AsError(err)
+		// Room 10 holds Tom (you), Sam (2) and Ana (3): only Ana leaves.
+		if err == nil || e.Code != output.CodeUsage || !strings.Contains(e.Message, "removes 1 member.") || !strings.Contains(e.Message, "--yes") {
+			t.Fatalf("%v: got %v", args, err)
+		}
+	}
+	if len(f.writes) != 0 {
+		t.Fatalf("updated without confirmation: %v", f.writes)
+	}
+}
+
+func TestUpdateQuestionWithoutAMemberList(t *testing.T) {
+	q := updateQuestion(map[string]any{"id": float64(10)}, []int64{2, 12}, "1")
+	if q != "Update room 10? Its members become the 2 given and you; anyone else is removed." {
+		t.Errorf("question = %q", q)
 	}
 }
 
@@ -916,7 +1028,7 @@ func TestRoomWritesForbiddenExplainTheTokenNeeded(t *testing.T) {
 	f := newFakeCampfire(t)
 	for _, args := range [][]string{
 		{"room", "create", "--name", "x"},
-		{"room", "update", "10", "--name", "x", "--member", "2"},
+		{"room", "update", "10", "--name", "x", "--member", "2", "--yes"},
 	} {
 		_, err := run(t, f, "member", args...)
 		e := output.AsError(err)

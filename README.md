@@ -57,10 +57,10 @@ campfire message post --room General "Hello"     # post
 campfire message post --room 4 -b "Hello"        # same, with a flag
 campfire room create --name Deploys --member 12  # closed room with you and user or bot 12
 campfire room create --name News --open          # open room: everyone
-campfire room update 10 --member 2 --member 12   # replace a closed room's members
+campfire room update 10 --member 2 --member 12   # replace a closed room's members; asks first
 campfire bot list                                # bots (administrators)
 campfire bot create --name "Deploy Bot"          # make a bot; shows its key once
-campfire bot rekey 12                            # new key for bot 12; shows it once
+campfire bot rekey 12                            # new key for bot 12; asks first, shows it once
 campfire bot delete 12                           # asks first; --yes skips the question
 campfire auth status                             # who am I?
 campfire doctor                                  # check setup
@@ -72,9 +72,11 @@ campfire doctor                                  # check setup
 
 Making rooms and bots needs a **write** personal access token. Bots also need the token's owner to be an administrator. A `403` means the token is read-only, or its owner can't do that.
 
-- **A bot's key is shown once**, by `bot create` and `bot rekey`. Store it straight into a secret manager: `--quiet` prints the key alone, so it can go into a pipe or a variable without passing through your terminal history, for example `key=$(campfire bot create --name "Deploy Bot" --quiet)`. The CLI never saves it to a profile or config, and `--verbose` never logs it.
+- **A bot's key is shown once**, by `bot create` and `bot rekey`. Store it straight into a secret manager in one command: `--quiet` prints the key alone, so it can be piped to a tool that reads stdin and never appears on your screen or in your scrollback, for example `campfire bot create --name "Deploy Bot" --quiet | gh secret set DEPLOY_BOT_KEY`. The CLI never saves it to a profile or config, and `--verbose` never logs it.
+- **Piped JSON output includes the key.** When output is not a terminal, or with `--json`, the envelope carries `bot_key`, so anything reading that output sees it. `--agent` refuses `bot create` and `bot rekey` unless you pass `--quiet` (or `--jq`).
+- `bot rekey` stops the current key at once and is not retried. If it fails, rekey again. `bot rekey`, `bot delete` and `room update` ask first; pass `--yes` to skip the question, which is required with `--agent` or without a terminal.
 - **Tokens cannot set a bot's webhook.** A webhook makes the server call any address it can reach, so a leaked token must not be able to set one. Add webhooks in the web UI.
-- `room update --member` is the room's whole membership: list everyone who should stay. Campfire always keeps you in the room. Without `--name` the room keeps its name. Open rooms hold everyone, so `room create --open` takes no `--member`, and open rooms are changed in the web UI.
+- `room update` takes a room ID, URL or name. `--member` is the room's whole membership: list everyone who should stay. Campfire always keeps you in the room. Without `--name` the room keeps its name. Open rooms hold everyone, so `room create --open` takes no `--member`, and `room update` refuses an open room: change it in the web UI.
 
 ### Output
 

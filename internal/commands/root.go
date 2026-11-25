@@ -389,13 +389,13 @@ func explainWriteError(err error, forbidden, invalid string) error {
 	return e
 }
 
-// confirmDestructive asks before a change that can't be undone. --yes and
-// --agent skip the question; without a terminal to ask on, --yes is required.
+// confirmDestructive asks before a change that can't be undone. --yes skips
+// the question; in agent mode or without a terminal to ask on, --yes is required.
 func confirmDestructive(question string, yes bool) error {
-	if yes || cfgAgent {
+	if yes {
 		return nil
 	}
-	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+	if cfgAgent || !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
 		return errors.NewInvalidArgsError(question + " Pass --yes to confirm")
 	}
 	var ok bool

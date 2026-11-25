@@ -42,8 +42,8 @@ Read and post messages in a self-hosted [Campfire](https://github.com/basecamp/o
 5. **Messages are oldest first.** The newest message is the last element: `--jq '.data[-1]'`.
 6. **Confirm before posting** on the user's behalf unless they asked you to post. A post with a personal token appears as the user.
 7. **Use `campfire doctor`** for setup, config or auth problems before guessing. It is read-only and prints hints.
-8. **Bot keys are secrets shown once.** `bot create` and `bot rekey` print the key only then. Never echo it into chat, logs or files. Get it with `--quiet` (the key alone) and pipe it straight into the user's secret manager, or ask the user how to store it first.
-9. **Confirm before creating, changing or deleting bots and rooms** unless the user asked for it. `bot delete` needs `--yes` or `--agent`. `room update --member` replaces the whole member list.
+8. **Bot keys are secrets shown once.** `bot create` and `bot rekey` print the key only then. Never echo it into chat, logs or files, and never read it into your context. Pass `--quiet` (the key alone) and pipe it in the same command straight into a secret manager that reads stdin, or ask the user how to store it first. With `--agent`, these commands refuse to run without `--quiet` or `--jq`.
+9. **Confirm with the user before creating, changing or deleting bots and rooms** unless they asked for it. `bot rekey`, `bot delete` and `room update` need `--yes`; `--agent` does not confirm for you. `room update --member` replaces the whole member list. A failed `bot rekey` is not retried: rekey again.
 
 ## Credentials
 
@@ -86,13 +86,14 @@ Want to post?
 └── To a person 1:1             → campfire message post --room "<their name>" "text"
 
 Want to set up a bot that posts to its own room?
-├── Make the bot                → campfire bot create --name "Deploy Bot" --quiet  (prints the key only; store it at once)
+├── Make the bot, store its key → campfire bot create --name "Deploy Bot" --quiet | <secret manager reading stdin>
+├── Find the bot's id           → campfire bot list --jq '.data[] | select(.name == "Deploy Bot") | .id'
 ├── Make its room               → campfire room create --name Deploys --member <bot_id>
 └── Post as the bot             → CAMPFIRE_TOKEN from the secret manager, then campfire message post --room <room_id> "text"
 
 Want to change a room?
-├── Members (whole list)        → campfire room update <id> --member <id> --member <id>
-└── Name                        → campfire room update <id> --name "New name" --member <id>...
+├── Members (whole list)        → campfire room update <room> --member <id> --member <id> --yes
+└── Name                        → campfire room update <room> --name "New name" --member <id>... --yes
 ```
 
 ## Quick Reference
@@ -105,11 +106,11 @@ Want to change a room?
 | `campfire room list` | List rooms and DMs (`id`, `display_name`, `type`, `involvement`) |
 | `campfire message list --room ROOM` | Read messages (`--before`, `--after`, `--all`, `--limit`) |
 | `campfire message post --room ROOM [BODY]` | Post (`-b/--body`, argument, or stdin) |
-| `campfire room create --name NAME [--member ID...] [--open]` | Make a closed room (you plus members) or an open one; `--quiet` prints the ID |
-| `campfire room update ID --member ID... [--name NAME]` | Replace a closed room's members (you stay); `--quiet` prints the ID |
+| `campfire room create --name NAME [--member ID...] [--open]` | Make a closed room (you plus members) or an open one; `--ids-only` prints the ID |
+| `campfire room update ROOM --member ID... [--name NAME] [--yes]` | Replace a closed room's members (you stay); ROOM is an ID, URL or name; `--ids-only` prints the ID |
 | `campfire bot list` | List bots (`id`, `name`; never keys) |
 | `campfire bot create --name NAME` | Make a bot; key shown once (`--quiet`: key only) |
-| `campfire bot rekey ID` | New key for a bot; shown once (`--quiet`: key only) |
+| `campfire bot rekey ID [--yes]` | New key for a bot; the old one stops at once; shown once (`--quiet`: key only) |
 | `campfire bot delete ID [--yes]` | Deactivate a bot |
 | `campfire doctor` | Check URL, connectivity, credential and skill |
 | `campfire commands --json` | Structured command catalog |

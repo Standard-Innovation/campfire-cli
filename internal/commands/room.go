@@ -31,7 +31,7 @@ of the other people in it. Needs a personal access token.`,
 		if err := requireAuth(); err != nil {
 			return err
 		}
-		rooms, err := fetchRooms()
+		rooms, _, err := fetchRooms()
 		if err != nil {
 			return err
 		}
@@ -97,24 +97,25 @@ $ campfire room create --name Announcements --open`,
 var (
 	roomUpdateName    string
 	roomUpdateMembers []string
+	roomUpdateYes     bool
 )
 
 var roomUpdateCmd = &cobra.Command{
-	Use:   "update <id>",
+	Use:   "update <room>",
 	Short: "Rename a closed room and replace its members",
 	Long: `Replaces a closed room's members with the people and bots given with --member,
 and renames it with --name. Campfire always keeps you in the room.
 
---member is the whole membership, so list everyone who should stay. Without
---name the room keeps its name. Needs a write personal access token owned by
-the room's creator or an administrator. Open rooms are changed in the web UI.`,
+The room is an ID, a room URL or a room name. --member is the whole membership,
+so list everyone who should stay. Without --name the room keeps its name. Asks
+first unless --yes. Needs a write personal access token owned by the room's
+creator or an administrator. Open rooms are changed in the web UI.`,
 	Example: `$ campfire room update 4 --member 2 --member 12
-$ campfire room update 4 --name Releases --member 2,12`,
+$ campfire room update Deploys --name Releases --member 2,12 --yes`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		roomID, err := requireID(args[0], "room")
-		if err != nil {
-			return err
+		if strings.TrimSpace(args[0]) == "" {
+			return errors.NewInvalidArgsError("No room given. Pass an ID, URL or name")
 		}
 		if len(roomUpdateMembers) == 0 {
 			return errors.NewInvalidArgsError("No members given. Pass --member for everyone who should be in the room; it replaces the whole list")
@@ -126,11 +127,23 @@ $ campfire room update 4 --name Releases --member 2,12`,
 		if err = requireAuth(); err != nil {
 			return err
 		}
+		roomID, err := resolveRoom(args[0])
+		if err != nil {
+			return err
+		}
+		room, myID, err := findRoom(roomID)
+		if err != nil {
+			return err
+		}
+		if room["type"] != "closed" {
+			return errors.NewInvalidArgsError(fmt.Sprintf("Room %s is %v, not closed: only closed rooms can be updated here. Change it in the web UI", roomID, room["type"]))
+		}
 		name := strings.TrimSpace(roomUpdateName)
 		if name == "" {
-			if name, err = currentRoomName(roomID); err != nil {
-				return err
-			}
+			name, _ = room["name"].(string)
+		}
+		if err = confirmDestructive(updateQuestion(room, userIDs, myID), roomUpdateYes); err != nil {
+			return err
 		}
 		resp, err := getCampfire().UpdateClosedRoom(roomID, name, userIDs)
 		if err != nil {
@@ -143,23 +156,39 @@ $ campfire room update 4 --name Releases --member 2,12`,
 	},
 }
 
-// currentRoomName looks up a room's name, since Campfire needs one on every update.
-func currentRoomName(roomID string) (string, error) {
-	resp, err := getCampfire().Rooms()
+// findRoom looks a room up in the person's rooms, with their own user ID.
+func findRoom(roomID string) (map[string]any, string, error) {
+	rooms, myID, err := fetchRooms()
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
-	rooms, _ := resp.Data.([]any)
 	for _, r := range rooms {
-		room := toMap(r)
-		if idString(room["id"]) != roomID {
-			continue
-		}
-		if name, ok := room["name"].(string); ok && name != "" {
-			return name, nil
+		if room := toMap(r); idString(room["id"]) == roomID {
+			return room, myID, nil
 		}
 	}
-	return "", output.ErrNotFoundHint("room", roomID, "Run 'campfire room list' to see your rooms, or pass --name")
+	return nil, "", output.ErrNotFoundHint("room", roomID, "Run 'campfire room list' to see your rooms")
+}
+
+// updateQuestion says what replacing a room's members does. Campfire lists the
+// members of direct rooms only, so for other rooms it can't count who leaves.
+func updateQuestion(room map[string]any, userIDs []int64, myID string) string {
+	question := fmt.Sprintf("Update room %s?", idString(room["id"]))
+	users, ok := room["users"].([]any)
+	if !ok {
+		return question + fmt.Sprintf(" Its members become the %d given and you; anyone else is removed.", len(userIDs))
+	}
+	keep := map[string]bool{myID: true}
+	for _, id := range userIDs {
+		keep[strconv.FormatInt(id, 10)] = true
+	}
+	removed := 0
+	for _, u := range users {
+		if !keep[idString(toMap(u)["id"])] {
+			removed++
+		}
+	}
+	return question + fmt.Sprintf(" This removes %s.", countNoun(removed, "member"))
 }
 
 // parseMemberIDs turns --member values, repeated or comma-separated, into user IDs.
@@ -176,31 +205,27 @@ func parseMemberIDs(members []string) ([]int64, error) {
 	return ids, nil
 }
 
-// printRoomMutation prints a created or updated room. --quiet prints only its ID.
+// printRoomMutation prints a created or updated room.
 func printRoomMutation(data any, verb string) {
 	room := toMap(data)
 	id := idString(room["id"])
-	if cfgQuiet && cfgJQ == "" {
-		writeOutputString(id + "\n")
-		captureResponse()
-		return
-	}
 	printMutation(room, fmt.Sprintf("%s %s", verb, id), "", []Breadcrumb{
 		breadcrumb("post", fmt.Sprintf("campfire message post --room %s \"...\"", id), "Post to the room"),
 		breadcrumb("update", fmt.Sprintf("campfire room update %s --member <id>", id), "Change who is in the room"),
 	})
 }
 
-// fetchRooms lists the person's rooms, adding a display_name to each.
-func fetchRooms() ([]any, error) {
+// fetchRooms lists the person's rooms, adding a display_name to each, and
+// returns the person's own user ID.
+func fetchRooms() ([]any, string, error) {
 	cf := getCampfire()
 	resp, err := cf.Rooms()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	me, err := cf.Me()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	myID := idString(toMap(me.Data)["id"])
 	rooms, _ := resp.Data.([]any)
@@ -209,7 +234,7 @@ func fetchRooms() ([]any, error) {
 			room["display_name"] = roomDisplayName(room, myID)
 		}
 	}
-	return rooms, nil
+	return rooms, myID, nil
 }
 
 // roomDisplayName is the room's name, or for a direct message the names of the
@@ -259,7 +284,7 @@ func resolveRoom(arg string) (string, error) {
 	if getCampfire().IsBot() {
 		return "", errors.NewInvalidArgsError(fmt.Sprintf("Bot keys need a room ID or URL, not a name (%q)", arg))
 	}
-	rooms, err := fetchRooms()
+	rooms, _, err := fetchRooms()
 	if err != nil {
 		return "", err
 	}
@@ -302,5 +327,6 @@ func init() {
 
 	roomUpdateCmd.Flags().StringVar(&roomUpdateName, "name", "", "New room name (default: keep the current name)")
 	roomUpdateCmd.Flags().StringSliceVar(&roomUpdateMembers, "member", nil, "User or bot ID who should be in the room (repeat, or comma-separate; replaces the list)")
+	roomUpdateCmd.Flags().BoolVarP(&roomUpdateYes, "yes", "y", false, "Update without asking")
 	roomCmd.AddCommand(roomUpdateCmd)
 }
