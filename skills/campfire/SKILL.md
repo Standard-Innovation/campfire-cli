@@ -11,6 +11,7 @@ triggers:
   # Resource actions
   - campfire message
   - campfire room
+  - campfire bot
   # Common actions
   - post to campfire
   - message in campfire
@@ -20,6 +21,8 @@ triggers:
   - what's in campfire
   - catch up on campfire
   - dm on campfire
+  - create a campfire room
+  - create a campfire bot
 invocable: true
 argument-hint: "[action] [args...]"
 ---
@@ -39,6 +42,8 @@ Read and post messages in a self-hosted [Campfire](https://github.com/basecamp/o
 5. **Messages are oldest first.** The newest message is the last element: `--jq '.data[-1]'`.
 6. **Confirm before posting** on the user's behalf unless they asked you to post. A post with a personal token appears as the user.
 7. **Use `campfire doctor`** for setup, config or auth problems before guessing. It is read-only and prints hints.
+8. **Bot keys are secrets shown once.** `bot create` and `bot rekey` print the key only then. Never echo it into chat, logs or files. Get it with `--quiet` (the key alone) and pipe it straight into the user's secret manager, or ask the user how to store it first.
+9. **Confirm before creating, changing or deleting bots and rooms** unless the user asked for it. `bot delete` needs `--yes` or `--agent`. `room update --member` replaces the whole member list.
 
 ## Credentials
 
@@ -50,6 +55,8 @@ Two kinds, both saved with `campfire auth login`:
 | Bot key | `12-abcDEF123` | Read and post as the bot, only in rooms the bot belongs to, by room ID or URL |
 
 `room list`, room lookup by name, and `auth status` user details need a personal token.
+
+Making rooms needs a **write** token. Managing bots needs a write token whose owner is an administrator. Exit 4 (forbidden) means the token is read-only or its owner can't do that. Tokens can't set a bot's webhook; that stays in the web UI.
 
 ## Rooms
 
@@ -77,6 +84,15 @@ Want to post?
 ├── Short message               → campfire message post --room <room> "text"
 ├── Multi-line or generated     → printf '%s' "$text" | campfire message post --room <room>
 └── To a person 1:1             → campfire message post --room "<their name>" "text"
+
+Want to set up a bot that posts to its own room?
+├── Make the bot                → campfire bot create --name "Deploy Bot" --quiet  (prints the key only; store it at once)
+├── Make its room               → campfire room create --name Deploys --member <bot_id>
+└── Post as the bot             → CAMPFIRE_TOKEN from the secret manager, then campfire message post --room <room_id> "text"
+
+Want to change a room?
+├── Members (whole list)        → campfire room update <id> --member <id> --member <id>
+└── Name                        → campfire room update <id> --name "New name" --member <id>...
 ```
 
 ## Quick Reference
@@ -89,6 +105,12 @@ Want to post?
 | `campfire room list` | List rooms and DMs (`id`, `display_name`, `type`, `involvement`) |
 | `campfire message list --room ROOM` | Read messages (`--before`, `--after`, `--all`, `--limit`) |
 | `campfire message post --room ROOM [BODY]` | Post (`-b/--body`, argument, or stdin) |
+| `campfire room create --name NAME [--member ID...] [--open]` | Make a closed room (you plus members) or an open one; `--quiet` prints the ID |
+| `campfire room update ID --member ID... [--name NAME]` | Replace a closed room's members (you stay); `--quiet` prints the ID |
+| `campfire bot list` | List bots (`id`, `name`; never keys) |
+| `campfire bot create --name NAME` | Make a bot; key shown once (`--quiet`: key only) |
+| `campfire bot rekey ID` | New key for a bot; shown once (`--quiet`: key only) |
+| `campfire bot delete ID [--yes]` | Deactivate a bot |
 | `campfire doctor` | Check URL, connectivity, credential and skill |
 | `campfire commands --json` | Structured command catalog |
 
@@ -111,6 +133,13 @@ Room:
  "users": [{"id": 1, "name": "Tom"}, {"id": 2, "name": "Sam"}]}
 ```
 
+`room create` and `room update` return `{"id": 21, "name": "Deploys", "type": "closed"}`.
+
+Bot (`bot create`, `bot rekey`; `bot list` has no `bot_key`):
+```json
+{"id": 12, "name": "Deploy Bot", "bot_key": "12-abcDEF123"}
+```
+
 `type` is `open`, `closed` or `direct`. `involvement` is `everything`, `mentions`, `nothing` or `invisible`.
 
 ## Global Flags
@@ -127,7 +156,7 @@ Room:
 | `--styled` / `--markdown` | Human-readable output |
 | `--ids-only` / `--count` | One ID per line / count only |
 | `--limit N` | Keep N results (for messages: the newest N, or with `--after` the first N after it) |
-| `--verbose` | Show requests (bot keys are masked) |
+| `--verbose` | Show requests (bot keys never appear) |
 
 Environment: `CAMPFIRE_API_URL`, `CAMPFIRE_TOKEN`, `CAMPFIRE_PROFILE`, `CAMPFIRE_ROOM`, `CAMPFIRE_NO_KEYRING`.
 
@@ -139,7 +168,7 @@ Environment: `CAMPFIRE_API_URL`, `CAMPFIRE_TOKEN`, `CAMPFIRE_PROFILE`, `CAMPFIRE
 | 1 | Usage error (bad flags, missing room, bot key used for a token-only command) |
 | 2 | Not found (unknown room or message) |
 | 3 | Not authenticated (missing, revoked or wrong token) |
-| 4 | Forbidden (for example a read-only token used to post) |
+| 4 | Forbidden (for example a read-only token used to post, or a member's token used to manage bots) |
 | 5 | Rate limited |
 | 6 | Network error |
 | 7 | Server error |

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Standard-Innovation/campfire-cli/internal/errors"
@@ -14,8 +15,8 @@ import (
 
 var roomCmd = &cobra.Command{
 	Use:   "room",
-	Short: "List rooms",
-	Long:  "Commands for finding Campfire rooms, including direct messages.",
+	Short: "List, create and update rooms",
+	Long:  "Commands for finding Campfire rooms, including direct messages, and for making and changing rooms.",
 }
 
 var roomListCmd = &cobra.Command{
@@ -47,6 +48,147 @@ of the other people in it. Needs a personal access token.`,
 		})
 		return nil
 	},
+}
+
+var (
+	roomCreateName    string
+	roomCreateOpen    bool
+	roomCreateMembers []string
+)
+
+var roomCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a room",
+	Long: `Creates a closed room holding you and the people and bots given with --member,
+or with --open an open room, which holds every person and bot on the account.
+
+Needs a write personal access token. The account may limit making rooms to
+administrators.`,
+	Example: `$ campfire room create --name Deploys --member 12
+$ campfire room create --name Ops --member 2 --member 3
+$ campfire room create --name Announcements --open`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := strings.TrimSpace(roomCreateName)
+		if name == "" {
+			return errors.NewInvalidArgsError("No room name given. Pass --name")
+		}
+		if roomCreateOpen && len(roomCreateMembers) > 0 {
+			return errors.NewInvalidArgsError("--open and --member cannot be used together: an open room holds everyone")
+		}
+		userIDs, err := parseMemberIDs(roomCreateMembers)
+		if err != nil {
+			return err
+		}
+		if err = requireAuth(); err != nil {
+			return err
+		}
+		resp, err := getCampfire().CreateRoom(name, roomCreateOpen, userIDs)
+		if err != nil {
+			return explainWriteError(err,
+				"Campfire refused: making a room needs a write token, and the account may limit it to administrators",
+				"Campfire rejected the room: check the name and the member IDs")
+		}
+		printRoomMutation(resp.Data, "Created room")
+		return nil
+	},
+}
+
+var (
+	roomUpdateName    string
+	roomUpdateMembers []string
+)
+
+var roomUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Rename a closed room and replace its members",
+	Long: `Replaces a closed room's members with the people and bots given with --member,
+and renames it with --name. Campfire always keeps you in the room.
+
+--member is the whole membership, so list everyone who should stay. Without
+--name the room keeps its name. Needs a write personal access token owned by
+the room's creator or an administrator. Open rooms are changed in the web UI.`,
+	Example: `$ campfire room update 4 --member 2 --member 12
+$ campfire room update 4 --name Releases --member 2,12`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		roomID, err := requireID(args[0], "room")
+		if err != nil {
+			return err
+		}
+		if len(roomUpdateMembers) == 0 {
+			return errors.NewInvalidArgsError("No members given. Pass --member for everyone who should be in the room; it replaces the whole list")
+		}
+		userIDs, err := parseMemberIDs(roomUpdateMembers)
+		if err != nil {
+			return err
+		}
+		if err = requireAuth(); err != nil {
+			return err
+		}
+		name := strings.TrimSpace(roomUpdateName)
+		if name == "" {
+			if name, err = currentRoomName(roomID); err != nil {
+				return err
+			}
+		}
+		resp, err := getCampfire().UpdateClosedRoom(roomID, name, userIDs)
+		if err != nil {
+			return explainWriteError(err,
+				"Campfire refused: changing a room needs a write token owned by the room's creator or an administrator",
+				"Campfire rejected the change: check the name and the member IDs. Open rooms are changed in the web UI")
+		}
+		printRoomMutation(resp.Data, "Updated room")
+		return nil
+	},
+}
+
+// currentRoomName looks up a room's name, since Campfire needs one on every update.
+func currentRoomName(roomID string) (string, error) {
+	resp, err := getCampfire().Rooms()
+	if err != nil {
+		return "", err
+	}
+	rooms, _ := resp.Data.([]any)
+	for _, r := range rooms {
+		room := toMap(r)
+		if idString(room["id"]) != roomID {
+			continue
+		}
+		if name, ok := room["name"].(string); ok && name != "" {
+			return name, nil
+		}
+	}
+	return "", output.ErrNotFoundHint("room", roomID, "Run 'campfire room list' to see your rooms, or pass --name")
+}
+
+// parseMemberIDs turns --member values, repeated or comma-separated, into user IDs.
+func parseMemberIDs(members []string) ([]int64, error) {
+	ids := make([]int64, 0, len(members))
+	for _, m := range members {
+		m = strings.TrimSpace(m)
+		id, err := strconv.ParseInt(m, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, errors.NewInvalidArgsError(fmt.Sprintf("Invalid member ID %q: expected a user or bot ID", m))
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// printRoomMutation prints a created or updated room. --quiet prints only its ID.
+func printRoomMutation(data any, verb string) {
+	room := toMap(data)
+	id := idString(room["id"])
+	if cfgQuiet && cfgJQ == "" {
+		writeOutputString(id + "\n")
+		captureResponse()
+		return
+	}
+	printMutation(room, fmt.Sprintf("%s %s", verb, id), "", []Breadcrumb{
+		breadcrumb("post", fmt.Sprintf("campfire message post --room %s \"...\"", id), "Post to the room"),
+		breadcrumb("update", fmt.Sprintf("campfire room update %s --member <id>", id), "Change who is in the room"),
+	})
 }
 
 // fetchRooms lists the person's rooms, adding a display_name to each.
@@ -95,7 +237,7 @@ func roomDisplayName(room map[string]any, myID string) string {
 }
 
 var (
-	roomIDPattern  = regexp.MustCompile(`^[0-9]+$`)
+	idPattern      = regexp.MustCompile(`^[0-9]+$`)
 	roomURLPattern = regexp.MustCompile(`/rooms/([0-9]+)`)
 )
 
@@ -107,7 +249,7 @@ func resolveRoom(arg string) (string, error) {
 	switch {
 	case arg == "":
 		return "", errors.NewInvalidArgsError("No room given. Pass --room (an ID, URL or name) or set CAMPFIRE_ROOM")
-	case roomIDPattern.MatchString(arg):
+	case idPattern.MatchString(arg):
 		return arg, nil
 	}
 	if m := roomURLPattern.FindStringSubmatch(arg); m != nil {
@@ -152,4 +294,13 @@ func roomMatches(room map[string]any, name string) bool {
 func init() {
 	rootCmd.AddCommand(roomCmd)
 	roomCmd.AddCommand(roomListCmd)
+
+	roomCreateCmd.Flags().StringVar(&roomCreateName, "name", "", "Room name")
+	roomCreateCmd.Flags().BoolVar(&roomCreateOpen, "open", false, "Make an open room, which holds everyone")
+	roomCreateCmd.Flags().StringSliceVar(&roomCreateMembers, "member", nil, "User or bot ID to add (repeat, or comma-separate)")
+	roomCmd.AddCommand(roomCreateCmd)
+
+	roomUpdateCmd.Flags().StringVar(&roomUpdateName, "name", "", "New room name (default: keep the current name)")
+	roomUpdateCmd.Flags().StringSliceVar(&roomUpdateMembers, "member", nil, "User or bot ID who should be in the room (repeat, or comma-separate; replaces the list)")
+	roomCmd.AddCommand(roomUpdateCmd)
 }

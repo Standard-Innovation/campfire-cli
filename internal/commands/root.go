@@ -7,6 +7,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,6 +23,7 @@ import (
 	"github.com/basecamp/cli/credstore"
 	"github.com/basecamp/cli/output"
 	"github.com/basecamp/cli/profile"
+	"github.com/charmbracelet/huh"
 	"github.com/itchyny/gojq"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -363,6 +365,42 @@ func requireAuth() error {
 	}
 	if cfg.Token == "" {
 		return errors.NewAuthError("No access token configured")
+	}
+	return nil
+}
+
+// explainWriteError says what a 403 or 422 from a write means. Campfire mostly
+// answers these with no body, so the explanation replaces the bare status text;
+// when the server gives its own reason, that stays and the explanation is the hint.
+func explainWriteError(err error, forbidden, invalid string) error {
+	var e *output.Error
+	if !stderrors.As(err, &e) {
+		return err
+	}
+	explanation := map[int]string{http.StatusForbidden: forbidden, http.StatusUnprocessableEntity: invalid}[e.HTTPStatus]
+	if explanation == "" {
+		return err
+	}
+	if e.Message == http.StatusText(e.HTTPStatus) {
+		e.Message = explanation
+	} else {
+		e.Hint = explanation
+	}
+	return e
+}
+
+// confirmDestructive asks before a change that can't be undone. --yes and
+// --agent skip the question; without a terminal to ask on, --yes is required.
+func confirmDestructive(question string, yes bool) error {
+	if yes || cfgAgent {
+		return nil
+	}
+	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+		return errors.NewInvalidArgsError(question + " Pass --yes to confirm")
+	}
+	var ok bool
+	if err := huh.NewConfirm().Title(question).Value(&ok).Run(); err != nil || !ok {
+		return errors.NewInvalidArgsError("Cancelled")
 	}
 	return nil
 }
@@ -824,6 +862,7 @@ func firstNonEmpty(values ...string) string {
 func SetTestMode(baseURL, token string) *CommandResult {
 	clientFactory = func() *client.Campfire {
 		cf, c := client.NewCampfire(baseURL, token)
+		c.Verbose = cfgVerbose
 		c.Sleeper = func(time.Duration) {}
 		return cf
 	}
