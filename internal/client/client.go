@@ -205,15 +205,15 @@ const maxRetries = 3
 var linkNextRe = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
 
 // doWithRetry wraps HTTPClient.Do with retry logic for 429 and 5xx responses.
-// Only retries idempotent requests on 5xx or a network error; the others only on 429.
-func (c *Client) doWithRetry(req *http.Request, idempotent bool) (*http.Response, error) {
+// With retry set it also retries on 5xx or a network error; without it, only on 429.
+func (c *Client) doWithRetry(req *http.Request, retry bool) (*http.Response, error) {
 
 	for attempt := range maxRetries + 1 {
 		resp, err := c.HTTPClient.Do(req)
 
-		// Network error — retry idempotent methods with backoff
+		// Network error: retry with backoff when allowed
 		if err != nil {
-			if attempt < maxRetries && idempotent {
+			if attempt < maxRetries && retry {
 				c.sleep(time.Duration(1<<uint(attempt)) * time.Second)
 				resetBody(req)
 				continue
@@ -232,8 +232,8 @@ func (c *Client) doWithRetry(req *http.Request, idempotent bool) (*http.Response
 			}
 		}
 
-		// 5xx: retry idempotent methods with exponential backoff
-		if resp.StatusCode >= 500 && idempotent && attempt < maxRetries {
+		// 5xx: retry with exponential backoff when allowed
+		if resp.StatusCode >= 500 && retry && attempt < maxRetries {
 			_ = resp.Body.Close()
 			c.sleep(time.Duration(1<<uint(attempt)) * time.Second)
 			resetBody(req)

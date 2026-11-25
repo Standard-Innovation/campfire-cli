@@ -42,7 +42,7 @@ Read and post messages in a self-hosted [Campfire](https://github.com/basecamp/o
 5. **Messages are oldest first.** The newest message is the last element: `--jq '.data[-1]'`.
 6. **Confirm before posting** on the user's behalf unless they asked you to post. A post with a personal token appears as the user.
 7. **Use `campfire doctor`** for setup, config or auth problems before guessing. It is read-only and prints hints.
-8. **Bot keys are secrets shown once.** `bot create` and `bot rekey` print the key only then. Never echo it into chat, logs or files, and never read it into your context. Pass `--quiet` (the key alone) and pipe it in the same command straight into a secret manager that reads stdin, or ask the user how to store it first. With `--agent`, these commands refuse to run without `--quiet` or `--jq`.
+8. **Bot keys are secrets shown once.** `bot create` and `bot rekey` print the key only then. Never echo it into chat, logs or files, and never read it into your context. Pass `--quiet` (the key alone) and pipe it in the same command straight into a secret manager that reads stdin, or ask the user how to store it first. These commands need `--quiet` piped straight into a secret manager: with `--agent`, `--ids-only` or `--count` they refuse to run.
 9. **Confirm with the user before creating, changing or deleting bots and rooms** unless they asked for it. `bot rekey`, `bot delete` and `room update` need `--yes`; `--agent` does not confirm for you. `room update --member` replaces the whole member list. A failed `bot rekey` is not retried: rekey again.
 
 ## Credentials

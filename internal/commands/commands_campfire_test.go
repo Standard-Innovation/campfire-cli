@@ -678,14 +678,21 @@ func TestBotRekeyQuietPrintsOnlyTheNewKey(t *testing.T) {
 	}
 }
 
-func TestBotRekeyIDsOnlyPrintsTheBotID(t *testing.T) {
+func TestBotKeyRefusesIDsOnlyAndCount(t *testing.T) {
 	f := newFakeCampfire(t)
-	out, err := runRaw(t, f, "tok", "bot", "rekey", "12", "--yes", "--ids-only")
-	if err != nil {
-		t.Fatal(err)
+	for _, args := range [][]string{
+		{"bot", "create", "--name", "Deploy Bot", "--ids-only"},
+		{"bot", "create", "--name", "Deploy Bot", "--count"},
+		{"bot", "rekey", "12", "--yes", "--ids-only"},
+		{"bot", "rekey", "12", "--yes", "--count"},
+	} {
+		_, err := run(t, f, "tok", args...)
+		if e := output.AsError(err); err == nil || e.Code != output.CodeUsage || !strings.Contains(e.Message, "--quiet") {
+			t.Errorf("%v: got %v", args, err)
+		}
 	}
-	if out != "12\n" {
-		t.Errorf("output = %q", out)
+	if len(f.writes) != 0 {
+		t.Fatalf("writes = %v", f.writes)
 	}
 }
 

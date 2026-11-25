@@ -56,7 +56,7 @@ var botCreateCmd = &cobra.Command{
 	Long: `Creates a bot and prints its key. Campfire shows the key only now.
 
 --quiet prints the key alone: pipe it straight into a secret manager that reads
-stdin, in one command. With --agent, pass --quiet (or --jq).`,
+stdin, in one command. With --agent, pass --quiet.`,
 	Example: `$ campfire bot create --name "Deploy Bot"
 $ campfire bot create --name "Deploy Bot" --quiet | gh secret set DEPLOY_BOT_KEY`,
 	Args: cobra.NoArgs,
@@ -88,7 +88,7 @@ once, and Campfire shows the new key only now. Asks first unless --yes.
 The request is not retried. On failure, rekey again.
 
 --quiet prints the key alone: pipe it straight into a secret manager that reads
-stdin, in one command. With --agent, pass --quiet (or --jq).`,
+stdin, in one command. With --agent, pass --quiet.`,
 	Example: "$ campfire bot rekey 12\n$ campfire bot rekey 12 --yes --quiet | gh secret set DEPLOY_BOT_KEY",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -145,10 +145,11 @@ var botDeleteCmd = &cobra.Command{
 	},
 }
 
-// requireKeyOutput refuses --agent's default output for a bot key, which an
-// agent would read into its context: it must ask for the key alone.
+// requireKeyOutput refuses output that would lose a key shown once
+// (--ids-only, --count) or read it into an agent's context (--agent's default):
+// the key must be asked for alone.
 func requireKeyOutput() error {
-	if cfgAgent && !cfgQuiet && cfgJQ == "" {
+	if cfgIDsOnly || cfgCount || (cfgAgent && !cfgQuiet && cfgJQ == "") {
 		return errors.NewInvalidArgsError("Bot keys are shown once: pass --quiet and pipe it straight into a secret manager")
 	}
 	return nil
