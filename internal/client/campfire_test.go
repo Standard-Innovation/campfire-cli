@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsBotKey(t *testing.T) {
@@ -123,5 +124,47 @@ func TestMessagesReadsPagingHeaders(t *testing.T) {
 	}
 	if resp.TotalCount != 120 || !strings.HasSuffix(resp.LinkNext, "before=10") {
 		t.Errorf("total=%d next=%q", resp.TotalCount, resp.LinkNext)
+	}
+}
+
+func TestRekeyBotIsNotRetried(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	cf, c := NewCampfire(srv.URL, "tok")
+	c.Sleeper = func(time.Duration) {}
+	if _, err := cf.RekeyBot("12"); err == nil {
+		t.Fatal("expected an error")
+	}
+	if hits != 1 {
+		t.Errorf("rekey sent %d times, want 1", hits)
+	}
+}
+
+func TestNetworkErrorsNeverShowTheBotKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	baseURL := srv.URL
+	srv.Close()
+
+	cf, c := NewCampfire(baseURL, "12-abcDEF123456")
+	c.Sleeper = func(time.Duration) {}
+	_, err := cf.Messages("4", MessagesPage{})
+	if err == nil || !strings.Contains(err.Error(), "Request failed") {
+		t.Fatalf("expected a network error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "abcDEF123456") || !strings.Contains(err.Error(), "[BOT_KEY]") {
+		t.Errorf("error = %q", err)
+	}
+}
+
+func TestRefusingAForeignURLNeverShowsTheBotKey(t *testing.T) {
+	c := New("https://chat.example.com", "")
+	_, err := c.buildURL("https://evil.example.net/rooms/4/12-abcDEF123456/messages")
+	if err == nil || strings.Contains(err.Error(), "abcDEF123456") {
+		t.Fatalf("error = %v", err)
 	}
 }

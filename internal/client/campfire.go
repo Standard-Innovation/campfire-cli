@@ -101,6 +101,72 @@ func (cf *Campfire) Post(roomID, body string) (*APIResponse, error) {
 	})
 }
 
+// Bots lists the account's active bots. Campfire never lists their keys.
+func (cf *Campfire) Bots() (*APIResponse, error) {
+	if cf.IsBot() {
+		return nil, ErrNeedsToken("Listing bots")
+	}
+	return cf.API.Get("/account/bots.json")
+}
+
+// CreateBot makes a bot. The response holds its key, which Campfire shows only now.
+func (cf *Campfire) CreateBot(name string) (*APIResponse, error) {
+	if cf.IsBot() {
+		return nil, ErrNeedsToken("Creating a bot")
+	}
+	return cf.API.Post("/account/bots.json", map[string]any{
+		"user": map[string]any{"name": name},
+	})
+}
+
+// RekeyBot replaces a bot's key. The response holds the new key. It is not
+// retried: a retry after a lost response would replace a key no one has seen.
+func (cf *Campfire) RekeyBot(botID string) (*APIResponse, error) {
+	if cf.IsBot() {
+		return nil, ErrNeedsToken("Rekeying a bot")
+	}
+	return cf.API.PutOnce(fmt.Sprintf("/account/bots/%s/key.json", url.PathEscape(botID)), nil)
+}
+
+// DeleteBot deactivates a bot.
+func (cf *Campfire) DeleteBot(botID string) (*APIResponse, error) {
+	if cf.IsBot() {
+		return nil, ErrNeedsToken("Deleting a bot")
+	}
+	return cf.API.Delete(fmt.Sprintf("/account/bots/%s.json", url.PathEscape(botID)))
+}
+
+// CreateRoom makes an open room, or a closed room holding userIDs and the
+// caller. Open rooms hold everyone, so they take no members.
+func (cf *Campfire) CreateRoom(name string, open bool, userIDs []int64) (*APIResponse, error) {
+	if cf.IsBot() {
+		return nil, ErrNeedsToken("Creating a room")
+	}
+	room := map[string]any{"name": name}
+	if open {
+		return cf.API.Post("/rooms/opens.json", map[string]any{"room": room})
+	}
+	if userIDs == nil {
+		userIDs = []int64{}
+	}
+	return cf.API.Post("/rooms/closeds.json", map[string]any{"room": room, "user_ids": userIDs})
+}
+
+// UpdateClosedRoom renames a closed room and replaces its members with userIDs.
+// Campfire always keeps the caller.
+func (cf *Campfire) UpdateClosedRoom(roomID, name string, userIDs []int64) (*APIResponse, error) {
+	if cf.IsBot() {
+		return nil, ErrNeedsToken("Updating a room")
+	}
+	if userIDs == nil {
+		userIDs = []int64{}
+	}
+	return cf.API.Put(fmt.Sprintf("/rooms/closeds/%s.json", url.PathEscape(roomID)), map[string]any{
+		"room":     map[string]any{"name": name},
+		"user_ids": userIDs,
+	})
+}
+
 func (cf *Campfire) messagesPath(roomID string) string {
 	room := url.PathEscape(roomID)
 	if cf.IsBot() {

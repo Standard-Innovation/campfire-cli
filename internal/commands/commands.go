@@ -30,7 +30,7 @@ var commandCatalogTitles = map[string]string{
 }
 
 var commandCatalogGroups = map[string][]string{
-	"core":      {"message", "room"},
+	"core":      {"message", "room", "bot"},
 	"admin":     {"auth"},
 	"utilities": {"completion", "doctor", "skill", "commands", "version"},
 }

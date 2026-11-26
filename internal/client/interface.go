@@ -8,6 +8,7 @@ type API interface {
 	PostText(path, text string) (*APIResponse, error)
 	Patch(path string, body any) (*APIResponse, error)
 	Put(path string, body any) (*APIResponse, error)
+	PutOnce(path string, body any) (*APIResponse, error)
 	Delete(path string) (*APIResponse, error)
 	GetWithPagination(path string, fetchAll bool) (*APIResponse, error)
 }
