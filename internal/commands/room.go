@@ -159,6 +159,7 @@ $ campfire room update Deploys --name Releases --member 2,12 --yes`,
 
 // lookupRoom finds a room, given as an ID, URL or name, in the person's rooms.
 func lookupRoom(rooms []any, arg string) (map[string]any, error) {
+	arg = strings.TrimSpace(arg)
 	roomID := roomIDFromArg(arg)
 	if roomID == "" {
 		return matchRoomByName(rooms, arg)

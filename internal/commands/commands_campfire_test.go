@@ -1078,3 +1078,12 @@ func TestParseMemberIDsUsesTheIDRule(t *testing.T) {
 		}
 	}
 }
+
+func TestRoomUpdateTrimsTheRoomName(t *testing.T) {
+	f := newFakeCampfire(t)
+	_, err := run(t, f, "tok", "room", "update", " General ", "--member", "2", "--yes")
+	// Matching General finds it open; a missed match would be not found.
+	if e := output.AsError(err); err == nil || !strings.Contains(e.Message, "is open, not closed") {
+		t.Fatalf("got %v", err)
+	}
+}
