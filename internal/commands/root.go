@@ -369,10 +369,10 @@ func requireAuth() error {
 	return nil
 }
 
-// explainWriteError says what a 403 or 422 from a write means. Campfire mostly
+// explainRefusal says what a 403 or 422 from a write means. Campfire mostly
 // answers these with no body, so the explanation replaces the bare status text;
 // when the server gives its own reason, that stays and the explanation is the hint.
-func explainWriteError(err error, forbidden, invalid string) error {
+func explainRefusal(err error, forbidden, invalid string) error {
 	var e *output.Error
 	if !stderrors.As(err, &e) {
 		return err

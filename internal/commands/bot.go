@@ -33,7 +33,7 @@ var botListCmd = &cobra.Command{
 		}
 		resp, err := getCampfire().Bots()
 		if err != nil {
-			return explainWriteError(err, botForbidden, "")
+			return explainRefusal(err, botForbidden, "")
 		}
 		bots, _ := resp.Data.([]any)
 		cols := render.Columns{
@@ -73,7 +73,7 @@ $ campfire bot create --name "Deploy Bot" --quiet | gh secret set DEPLOY_BOT_KEY
 		}
 		resp, err := getCampfire().CreateBot(name)
 		if err != nil {
-			return explainWriteError(err, botForbidden, "Campfire rejected the bot: it needs a name")
+			return explainRefusal(err, botForbidden, "Campfire rejected the bot: it needs a name")
 		}
 		return printBotKey(resp.Data, "Created bot")
 	},
@@ -107,7 +107,7 @@ stdin, in one command. With --agent, pass --quiet.`,
 		}
 		resp, err := getCampfire().RekeyBot(botID)
 		if err != nil {
-			return explainWriteError(err, botForbidden, "")
+			return explainRefusal(err, botForbidden, "")
 		}
 		return printBotKey(resp.Data, "New key for bot")
 	},
@@ -136,7 +136,7 @@ var botDeleteCmd = &cobra.Command{
 			return err
 		}
 		if _, err = getCampfire().DeleteBot(botID); err != nil {
-			return explainWriteError(err, botForbidden, "")
+			return explainRefusal(err, botForbidden, "")
 		}
 		printMutation(map[string]any{"id": botID, "deleted": true}, "Deleted bot "+botID, "", []Breadcrumb{
 			breadcrumb("bots", "campfire bot list", "List the remaining bots"),
@@ -149,13 +149,14 @@ var botDeleteCmd = &cobra.Command{
 // (--ids-only, --count) or read it into an agent's context (--agent's default):
 // the key must be asked for alone.
 func requireKeyOutput() error {
-	if cfgIDsOnly || cfgCount || (cfgAgent && !cfgQuiet && cfgJQ == "") {
+	if cfgIDsOnly || cfgCount || (cfgAgent && !cfgQuiet) {
 		return errors.NewInvalidArgsError("Bot keys are shown once: pass --quiet and pipe it straight into a secret manager")
 	}
 	return nil
 }
 
-// printBotKey shows a bot with its key. The key is a secret Campfire shows only
+// printBotKey bypasses the print helpers on purpose: the key prints alone or under a shown-once warning.
+// It shows a bot with its key. The key is a secret Campfire shows only
 // once: --quiet prints it alone for piping into a secret manager, and human
 // output says so before printing it on a line of its own.
 func printBotKey(data any, summary string) error {
@@ -179,15 +180,6 @@ func printBotKey(data any, summary string) error {
 		printMutation(bot, fmt.Sprintf("%s %s", summary, id), "", breadcrumbs)
 	}
 	return nil
-}
-
-// requireID checks that an argument is a numeric ID before it goes into a path.
-func requireID(arg, noun string) (string, error) {
-	arg = strings.TrimSpace(arg)
-	if !idPattern.MatchString(arg) {
-		return "", errors.NewInvalidArgsError(fmt.Sprintf("Invalid %s ID %q: expected a number", noun, arg))
-	}
-	return arg, nil
 }
 
 func init() {

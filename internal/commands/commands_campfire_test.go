@@ -23,8 +23,9 @@ import (
 // Its PUT to closed rooms accepts any room, so the CLI must check the type.
 type fakeCampfire struct {
 	*httptest.Server
-	posts  []map[string]any
-	writes []fakeWrite
+	posts     []map[string]any
+	writes    []fakeWrite
+	roomLists int
 }
 
 type fakeWrite struct {
@@ -52,6 +53,7 @@ func newFakeCampfire(t *testing.T) *fakeCampfire {
 		if !f.authorized(w, r) {
 			return
 		}
+		f.roomLists++
 		writeJSON(w, []any{
 			map[string]any{"id": 4, "name": "General", "type": "open", "involvement": "mentions"},
 			map[string]any{"id": 7, "name": nil, "type": "direct", "involvement": "everything", "users": []any{
@@ -764,11 +766,13 @@ func TestBotRekeyAsksFirst(t *testing.T) {
 	}
 }
 
-func TestBotKeyWithAgentNeedsQuietOrJQ(t *testing.T) {
+func TestBotKeyWithAgentNeedsQuiet(t *testing.T) {
 	f := newFakeCampfire(t)
 	for _, args := range [][]string{
 		{"bot", "create", "--name", "Deploy Bot", "--agent"},
+		{"bot", "create", "--name", "Deploy Bot", "--agent", "--jq", ".bot_key"},
 		{"bot", "rekey", "12", "--yes", "--agent"},
+		{"bot", "rekey", "12", "--yes", "--agent", "--jq", ".bot_key"},
 	} {
 		_, err := run(t, f, "tok", args...)
 		if e := output.AsError(err); err == nil || e.Code != output.CodeUsage || !strings.Contains(e.Message, "--quiet") {
@@ -780,9 +784,8 @@ func TestBotKeyWithAgentNeedsQuietOrJQ(t *testing.T) {
 	}
 
 	for args, want := range map[string]string{
-		"bot create --name Bot --agent --quiet":       fakeBotKey + "\n",
-		"bot create --name Bot --agent --jq .bot_key": fakeBotKey + "\n",
-		"bot rekey 12 --yes --agent --quiet":          fakeNewBotKey + "\n",
+		"bot create --name Bot --agent --quiet": fakeBotKey + "\n",
+		"bot rekey 12 --yes --agent --quiet":    fakeNewBotKey + "\n",
 	} {
 		out, err := runRaw(t, f, "tok", strings.Fields(args)...)
 		if err != nil {
@@ -1041,6 +1044,37 @@ func TestRoomWritesForbiddenExplainTheTokenNeeded(t *testing.T) {
 		e := output.AsError(err)
 		if err == nil || e.Code != output.CodeForbidden || !strings.Contains(e.Message, "write token") {
 			t.Errorf("%v: got %v", args, err)
+		}
+	}
+}
+
+func TestRoomUpdateByNameListsRoomsOnce(t *testing.T) {
+	f := newFakeCampfire(t)
+	_, err := run(t, f, "tok", "room", "update", "General", "--member", "2", "--yes")
+	if err == nil {
+		t.Fatal("expected General (open) to be refused")
+	}
+	if f.roomLists != 1 {
+		t.Errorf("listed rooms %d times, want 1", f.roomLists)
+	}
+}
+
+func TestRequireIDAcceptsOnlyPositiveDigits(t *testing.T) {
+	for in, ok := range map[string]bool{"12": true, " 7 ": true, "0": false, "+5": false, "-1": false, "1e3": false, "": false, "../x": false} {
+		if _, err := requireID(in, "bot"); (err == nil) != ok {
+			t.Errorf("requireID(%q) err = %v, want ok %v", in, err, ok)
+		}
+	}
+}
+
+func TestParseMemberIDsUsesTheIDRule(t *testing.T) {
+	got, err := parseMemberIDs([]string{"2", " 12 "})
+	if err != nil || fmt.Sprint(got) != "[2 12]" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	for _, bad := range []string{"0", "+5", "99999999999999999999"} {
+		if _, err := parseMemberIDs([]string{bad}); err == nil {
+			t.Errorf("parseMemberIDs(%q) accepted", bad)
 		}
 	}
 }

@@ -85,7 +85,7 @@ $ campfire room create --name Announcements --open`,
 		}
 		resp, err := getCampfire().CreateRoom(name, roomCreateOpen, userIDs)
 		if err != nil {
-			return explainWriteError(err,
+			return explainRefusal(err,
 				"Campfire refused: making a room needs a write token, and the account may limit it to administrators",
 				"Campfire rejected the room: check the name and the member IDs")
 		}
@@ -127,14 +127,15 @@ $ campfire room update Deploys --name Releases --member 2,12 --yes`,
 		if err = requireAuth(); err != nil {
 			return err
 		}
-		roomID, err := resolveRoom(args[0])
+		rooms, myID, err := fetchRooms()
 		if err != nil {
 			return err
 		}
-		room, myID, err := findRoom(roomID)
+		room, err := lookupRoom(rooms, args[0])
 		if err != nil {
 			return err
 		}
+		roomID := idString(room["id"])
 		if room["type"] != "closed" {
 			return errors.NewInvalidArgsError(fmt.Sprintf("Room %s is %v, not closed: only closed rooms can be updated here. Change it in the web UI", roomID, room["type"]))
 		}
@@ -147,7 +148,7 @@ $ campfire room update Deploys --name Releases --member 2,12 --yes`,
 		}
 		resp, err := getCampfire().UpdateClosedRoom(roomID, name, userIDs)
 		if err != nil {
-			return explainWriteError(err,
+			return explainRefusal(err,
 				"Campfire refused: changing a room needs a write token owned by the room's creator or an administrator",
 				"Campfire rejected the change: check the name and the member IDs. Open rooms are changed in the web UI")
 		}
@@ -156,18 +157,18 @@ $ campfire room update Deploys --name Releases --member 2,12 --yes`,
 	},
 }
 
-// findRoom looks a room up in the person's rooms, with their own user ID.
-func findRoom(roomID string) (map[string]any, string, error) {
-	rooms, myID, err := fetchRooms()
-	if err != nil {
-		return nil, "", err
+// lookupRoom finds a room, given as an ID, URL or name, in the person's rooms.
+func lookupRoom(rooms []any, arg string) (map[string]any, error) {
+	roomID := roomIDFromArg(arg)
+	if roomID == "" {
+		return matchRoomByName(rooms, arg)
 	}
 	for _, r := range rooms {
 		if room := toMap(r); idString(room["id"]) == roomID {
-			return room, myID, nil
+			return room, nil
 		}
 	}
-	return nil, "", output.ErrNotFoundHint("room", roomID, "Run 'campfire room list' to see your rooms")
+	return nil, output.ErrNotFoundHint("room", roomID, "Run 'campfire room list' to see your rooms")
 }
 
 // updateQuestion says what replacing a room's members does. Campfire lists the
@@ -194,11 +195,14 @@ func updateQuestion(room map[string]any, userIDs []int64, myID string) string {
 // parseMemberIDs turns --member values, repeated or comma-separated, into user IDs.
 func parseMemberIDs(members []string) ([]int64, error) {
 	ids := make([]int64, 0, len(members))
-	for _, m := range members {
-		m = strings.TrimSpace(m)
-		id, err := strconv.ParseInt(m, 10, 64)
-		if err != nil || id <= 0 {
-			return nil, errors.NewInvalidArgsError(fmt.Sprintf("Invalid member ID %q: expected a user or bot ID", m))
+	for _, member := range members {
+		digits, err := requireID(member, "member")
+		if err != nil {
+			return nil, err
+		}
+		id, err := strconv.ParseInt(digits, 10, 64)
+		if err != nil {
+			return nil, errors.NewInvalidArgsError(fmt.Sprintf("Invalid member ID %q: expected a number", digits))
 		}
 		ids = append(ids, id)
 	}
@@ -261,24 +265,30 @@ func roomDisplayName(room map[string]any, myID string) string {
 	return strings.Join(names, ", ")
 }
 
-var (
-	idPattern      = regexp.MustCompile(`^[0-9]+$`)
-	roomURLPattern = regexp.MustCompile(`/rooms/([0-9]+)`)
-)
+var roomURLPattern = regexp.MustCompile(`/rooms/([0-9]+)`)
+
+// roomIDFromArg is the room ID in an ID or a room or message URL, or "" for a name.
+func roomIDFromArg(arg string) string {
+	arg = strings.TrimSpace(arg)
+	if idPattern.MatchString(arg) {
+		return arg
+	}
+	if m := roomURLPattern.FindStringSubmatch(arg); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 // resolveRoom turns a room flag into a room ID. It accepts an ID, a room or
 // message URL, or a display name: a room's name, or the other person's name for
 // a 1:1 direct message. Falls back to the configured default room.
 func resolveRoom(arg string) (string, error) {
 	arg = strings.TrimSpace(firstNonEmpty(arg, cfg.Room))
-	switch {
-	case arg == "":
+	if arg == "" {
 		return "", errors.NewInvalidArgsError("No room given. Pass --room (an ID, URL or name) or set CAMPFIRE_ROOM")
-	case idPattern.MatchString(arg):
-		return arg, nil
 	}
-	if m := roomURLPattern.FindStringSubmatch(arg); m != nil {
-		return m[1], nil
+	if roomID := roomIDFromArg(arg); roomID != "" {
+		return roomID, nil
 	}
 
 	if getCampfire().IsBot() {
@@ -288,25 +298,33 @@ func resolveRoom(arg string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	room, err := matchRoomByName(rooms, arg)
+	if err != nil {
+		return "", err
+	}
+	return idString(room["id"]), nil
+}
 
+// matchRoomByName finds the one room whose display name is name.
+func matchRoomByName(rooms []any, name string) (map[string]any, error) {
 	var matches []map[string]any
 	for _, r := range rooms {
 		room, ok := r.(map[string]any)
-		if ok && roomMatches(room, arg) {
+		if ok && roomMatches(room, name) {
 			matches = append(matches, room)
 		}
 	}
 	switch len(matches) {
 	case 0:
-		return "", output.ErrNotFoundHint("room", arg, "Run 'campfire room list' to see your rooms")
+		return nil, output.ErrNotFoundHint("room", name, "Run 'campfire room list' to see your rooms")
 	case 1:
-		return idString(matches[0]["id"]), nil
+		return matches[0], nil
 	default:
 		names := make([]string, len(matches))
 		for i, m := range matches {
 			names[i] = fmt.Sprintf("%v (%s)", m["display_name"], idString(m["id"]))
 		}
-		return "", output.ErrAmbiguous("room", names)
+		return nil, output.ErrAmbiguous("room", names)
 	}
 }
 

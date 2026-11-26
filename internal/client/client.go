@@ -207,7 +207,6 @@ var linkNextRe = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
 // doWithRetry wraps HTTPClient.Do with retry logic for 429 and 5xx responses.
 // With retry set it also retries on 5xx or a network error; without it, only on 429.
 func (c *Client) doWithRetry(req *http.Request, retry bool) (*http.Response, error) {
-
 	for attempt := range maxRetries + 1 {
 		resp, err := c.HTTPClient.Do(req)
 
